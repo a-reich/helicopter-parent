@@ -27,7 +27,6 @@ PIPE_DIR = "/tmp/heli_debug"
 CONTROL_PIPE = os.path.join(PIPE_DIR, "control")
 DEBUG_IN = os.path.join(PIPE_DIR, "debug_in")
 DEBUG_OUT = os.path.join(PIPE_DIR, "debug_out")
-STATUS_PIPE = os.path.join(PIPE_DIR, "status")
 
 
 class DebugController:
@@ -50,7 +49,7 @@ class DebugController:
         """Create the named pipes for communication."""
         os.makedirs(PIPE_DIR, exist_ok=True)
 
-        for pipe in (CONTROL_PIPE, DEBUG_IN, DEBUG_OUT, STATUS_PIPE):
+        for pipe in (CONTROL_PIPE, DEBUG_IN, DEBUG_OUT):
             if os.path.exists(pipe):
                 os.unlink(pipe)
             os.mkfifo(pipe)
@@ -98,35 +97,18 @@ class DebugController:
         except Exception as e:
             print(f"Error monitoring {prefix}: {e}")
 
-    def send_status(self, message):
-        """Send status message to client.
-
-        Args:
-            message: Status message to send
-        """
-        try:
-            # Open in non-blocking mode to avoid blocking if no reader
-            fd = os.open(STATUS_PIPE, os.O_WRONLY | os.O_NONBLOCK)
-            os.write(fd, (message + '\n').encode())
-            os.close(fd)
-        except (OSError, IOError):
-            # Ignore errors - client may not be connected
-            pass
-
     def attach_debugger(self):
         """Attach pdb to the target process using pdb.attach()."""
         # Check preconditions
         if self.debug_active:
-            self.send_status("ERROR: Debugger already attached")
+            print("ERROR: Debugger already attached")
             return
 
         if not self.target_process or self.target_process.poll() is not None:
-            self.send_status("ERROR: Target process not running")
+            print("ERROR: Target process not running")
             return
 
-        # Notify client
         print(f"Attaching pdb to PID {self.target_process.pid}...")
-        self.send_status(f"ATTACHING: PID {self.target_process.pid}")
 
         # Open debug pipes
         debug_in = None
@@ -148,7 +130,6 @@ class DebugController:
 
             # Set debug active flag
             self.debug_active = True
-            self.send_status("ATTACHED: Debugger session active")
 
             print("Debugger attached successfully", flush=True)
 
@@ -157,7 +138,6 @@ class DebugController:
 
         except Exception as e:
             # Handle errors
-            self.send_status(f"ERROR: Failed to attach debugger: {e}")
             print(f"Error attaching debugger: {e}")
 
         finally:
@@ -172,9 +152,8 @@ class DebugController:
             if debug_out:
                 debug_out.close()
 
-            # Clear debug flag and notify
+            # Clear debug flag
             self.debug_active = False
-            self.send_status("DETACHED: Debugger session ended")
             print("Debugger session ended")
 
     def listen_for_commands(self):
@@ -194,14 +173,11 @@ class DebugController:
 
                         if command == "ATTACH":
                             self.attach_debugger()
-                        elif command == "STATUS":
-                            status = "ATTACHED" if self.debug_active else "RUNNING"
-                            self.send_status(f"STATUS: {status}, Target PID: {self.target_process.pid}")
                         elif command == "QUIT":
                             self.running = False
                             break
                         else:
-                            self.send_status(f"ERROR: Unknown command: {command}")
+                            print(f"Unknown command: {command}")
             except Exception as e:
                 if self.running:
                     print(f"Error in command listener: {e}")
@@ -228,7 +204,6 @@ class DebugController:
         try:
             self.create_pipes()
             self.start_target_process()
-            self.send_status(f"STARTED: Target PID {self.target_process.pid}")
             self.listen_for_commands()
         except KeyboardInterrupt:
             print("\nController interrupted")

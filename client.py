@@ -24,7 +24,6 @@ PIPE_DIR = "/tmp/heli_debug"
 CONTROL_PIPE = os.path.join(PIPE_DIR, "control")
 DEBUG_IN = os.path.join(PIPE_DIR, "debug_in")
 DEBUG_OUT = os.path.join(PIPE_DIR, "debug_out")
-STATUS_PIPE = os.path.join(PIPE_DIR, "status")
 
 
 class DebugClient:
@@ -34,7 +33,6 @@ class DebugClient:
         """Initialize the debug client."""
         self.running = True
         self.debug_active = False
-        self.status_thread = None
         self.output_thread = None
 
     def check_controller_running(self):
@@ -49,28 +47,6 @@ class DebugClient:
             return False
         return True
 
-    def _monitor_status(self):
-        """Monitor status pipe for messages from controller (runs in thread)."""
-        try:
-            with open(STATUS_PIPE, 'r') as pipe:
-                while self.running:
-                    line = pipe.readline()
-                    if not line:
-                        break
-
-                    message = line.strip()
-                    print(f"\n[STATUS] {message}", flush=True)
-
-                    # Update state based on status
-                    if "ATTACHED:" in message:
-                        self.debug_active = True
-                    elif "DETACHED:" in message:
-                        self.debug_active = False
-
-        except Exception as e:
-            if self.running:
-                print(f"Status monitor error: {e}")
-
     def send_command(self, command):
         """Send a command to the controller.
 
@@ -81,8 +57,6 @@ class DebugClient:
             bool: True if successful, False otherwise
         """
         try:
-            # Open with timeout to avoid infinite blocking
-            import fcntl
             fd = os.open(CONTROL_PIPE, os.O_WRONLY)
             os.write(fd, (command + '\n').encode())
             os.close(fd)
@@ -134,30 +108,31 @@ class DebugClient:
                 except (BrokenPipeError, IOError) as e:
                     # Pipe closed by controller (pdb session ended)
                     break
-                except KeyboardInterrupt:
-                    # Send quit command to pdb
-                    try:
-                        debug_in.write('quit\n')
-                        debug_in.flush()
-                    except (BrokenPipeError, IOError):
-                        pass  # Pipe already closed
-                    break
+                # except KeyboardInterrupt:
+                #     # Send quit command to pdb
+                #     try:
+                #         debug_in.write('quit\n')
+                #         debug_in.flush()
+                #         debug_in.close()
+                #     except (BrokenPipeError, IOError):
+                #         pass  # Pipe already closed
+                #     break
 
         except Exception as e:
             print(f"Debug session error: {e}")
         finally:
             # Cleanup
             self.debug_active = False
-            if 'debug_in' in locals():
-                debug_in.close()
-            if 'debug_out' in locals():
-                debug_out.close()
+            # if 'debug_in' in locals():
+            #     debug_in.close()
+            # if 'debug_out' in locals():
+            #     debug_out.close()
 
     def run_interactive(self):
         """Run the interactive command loop."""
         print("Helicopter Parent - Debug Client")
         print("=" * 50)
-        print("Commands: attach, status, quit")
+        print("Commands: attach, quit")
         print("-" * 50)
 
         while self.running:
@@ -180,9 +155,6 @@ class DebugClient:
                     # Start debug session immediately (opening pipes unblocks controller)
                     self._debug_session()
 
-                elif command == "status":
-                    self.send_command("STATUS")
-
                 elif command in ("quit", "exit"):
                     self.send_command("QUIT")
                     self.running = False
@@ -190,7 +162,7 @@ class DebugClient:
 
                 else:
                     print(f"Unknown command: {command}")
-                    print("Available commands: attach, status, quit")
+                    print("Available commands: attach, quit")
 
             except EOFError:
                 break
@@ -202,16 +174,6 @@ class DebugClient:
         """Main run method."""
         if not self.check_controller_running():
             return
-
-        # Start status monitor thread
-        self.status_thread = threading.Thread(
-            target=self._monitor_status,
-            daemon=True
-        )
-        self.status_thread.start()
-
-        # Give status thread time to connect
-        time.sleep(0.2)
 
         try:
             self.run_interactive()
