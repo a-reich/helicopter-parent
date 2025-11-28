@@ -57,9 +57,9 @@ class DebugClient:
             bool: True if successful, False otherwise
         """
         try:
-            fd = os.open(CONTROL_PIPE, os.O_WRONLY)
-            os.write(fd, (command + '\n').encode())
-            os.close(fd)
+            with open(CONTROL_PIPE, 'wt') as fileobj:                    
+                fileobj.write(command  +'\n')
+                fileobj.flush()
             return True
         except Exception as e:
             print(f"Error sending command: {e}")
@@ -123,16 +123,23 @@ class DebugClient:
         finally:
             # Cleanup
             self.debug_active = False
-            # if 'debug_in' in locals():
-            #     debug_in.close()
-            # if 'debug_out' in locals():
-            #     debug_out.close()
+            # Close pipes, suppressing errors if already closed
+            if 'debug_in' in locals():
+                try:
+                    debug_in.close()
+                except (BrokenPipeError, IOError):
+                    pass  # Already closed by controller
+            if 'debug_out' in locals():
+                try:
+                    debug_out.close()
+                except (BrokenPipeError, IOError):
+                    pass  # Already closed by controller
 
     def run_interactive(self):
         """Run the interactive command loop."""
         print("Helicopter Parent - Debug Client")
         print("=" * 50)
-        print("Commands: attach, quit")
+        print("Commands: attach, quit, stop")
         print("-" * 50)
 
         while self.running:
@@ -156,13 +163,19 @@ class DebugClient:
                     self._debug_session()
 
                 elif command in ("quit", "exit"):
-                    self.send_command("QUIT")
+                    # Just exit client, leave controller and target running
+                    self.running = False
+                    break
+
+                elif command == "stop":
+                    # Stop controller and target, then exit client
+                    self.send_command("STOP")
                     self.running = False
                     break
 
                 else:
                     print(f"Unknown command: {command}")
-                    print("Available commands: attach, quit")
+                    print("Available commands: attach, quit, stop")
 
             except EOFError:
                 break

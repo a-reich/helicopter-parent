@@ -42,7 +42,8 @@ class DebugController:
         self.target_script = target_script
         self.target_args = target_args or []
         self.target_process = None
-        self.debug_active = False
+        self.redirection_is_off = threading.Event()
+        self.redirection_is_off.set()  # Initially off (redirection is off)
         self.running = True
 
     def create_pipes(self):
@@ -93,6 +94,8 @@ class DebugController:
         """
         try:
             for line in stream:
+                # Only print if redirection is off (avoids mixing target output with pdb session)
+                self.redirection_is_off.wait()
                 print(f"[{prefix}] {line}", end='', flush=True)
         except Exception as e:
             print(f"Error monitoring {prefix}: {e}")
@@ -100,7 +103,7 @@ class DebugController:
     def attach_debugger(self):
         """Attach pdb to the target process using pdb.attach()."""
         # Check preconditions
-        if self.debug_active:
+        if not self.redirection_is_off.is_set():
             print("ERROR: Debugger already attached")
             return
 
@@ -123,13 +126,12 @@ class DebugController:
             original_stdout = sys.stdout
             original_stderr = sys.stderr
 
+            self.redirection_is_off.clear()
             # Redirect to pipes
             sys.stdin = debug_in
             sys.stdout = debug_out
             sys.stderr = debug_out
-
-            # Set debug active flag
-            self.debug_active = True
+            
 
             print("Debugger attached successfully", flush=True)
 
@@ -141,6 +143,10 @@ class DebugController:
             print(f"Error attaching debugger: {e}")
 
         finally:
+            # Turn off redirection (set the "off" event)
+            # This allows the monitoring thread to write output again
+            self.redirection_is_off.set()
+
             # Restore original I/O
             sys.stdin = original_stdin
             sys.stdout = original_stdout
@@ -152,8 +158,6 @@ class DebugController:
             if debug_out:
                 debug_out.close()
 
-            # Clear debug flag
-            self.debug_active = False
             print("Debugger session ended")
 
     def listen_for_commands(self):
@@ -173,7 +177,7 @@ class DebugController:
 
                         if command == "ATTACH":
                             self.attach_debugger()
-                        elif command == "QUIT":
+                        elif command == "STOP":
                             self.running = False
                             break
                         else:
