@@ -1,20 +1,19 @@
 """
-controller.py - Script A: The controller/parent process
+controller.py - V2: Controller using PR_SET_PTRACER for direct client attachment
 
 This script:
 1. Launches the target process (Script B)
 2. Creates named pipes for communication
-3. Listens for debug attach commands from client (Script C)
-4. Attaches pdb to target process when requested
-5. Routes pdb I/O through pipes to client
+3. Listens for ptrace permission requests from client
+4. Uses sys.remote_exec() to inject prctl call granting client permission
+5. Client can then directly attach pdb without I/O redirection
 """
 
 import os
 import sys
 import subprocess
-import threading
+import tempfile
 import time
-import pdb
 
 # Check Python version
 if sys.version_info < (3, 14):
@@ -25,12 +24,14 @@ if sys.version_info < (3, 14):
 # Named pipe paths
 PIPE_DIR = "/tmp/heli_debug"
 CONTROL_PIPE = os.path.join(PIPE_DIR, "control")
-DEBUG_IN = os.path.join(PIPE_DIR, "debug_in")
-DEBUG_OUT = os.path.join(PIPE_DIR, "debug_out")
+RESPONSE_PIPE = os.path.join(PIPE_DIR, "response")
+
+# PR_SET_PTRACER constant from kernel headers
+PR_SET_PTRACER = 0x59616d61  # "Yama" in hex
 
 
 class DebugController:
-    """Controller process that manages target and debugger attachment."""
+    """Controller process that manages target and grants ptrace permission."""
 
     def __init__(self, target_script, target_args=None):
         """Initialize the debug controller.
@@ -42,18 +43,16 @@ class DebugController:
         self.target_script = target_script
         self.target_args = target_args or []
         self.target_process = None
-        self.redirection_is_off = threading.Event()
-        self.redirection_is_off.set()  # Initially off (redirection is off)
         self.running = True
 
     def create_pipes(self):
         """Create the named pipes for communication."""
-        os.makedirs(PIPE_DIR, exist_ok=True)
+        os.makedirs(PIPE_DIR, exist_ok=True, mode=0o700)
 
-        for pipe in (CONTROL_PIPE, DEBUG_IN, DEBUG_OUT):
+        for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
             if os.path.exists(pipe):
                 os.unlink(pipe)
-            os.mkfifo(pipe)
+            os.mkfifo(pipe, mode=0o600)
 
         print(f"Created pipes in {PIPE_DIR}")
 
@@ -64,101 +63,111 @@ class DebugController:
 
         self.target_process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            # stdout=subprocess.PIPE,
+            # stderr=subprocess.STDOUT,
             text=True,
             bufsize=1
         )
 
         print(f"Target process started with PID: {self.target_process.pid}")
 
-        # Start threads to monitor target output
-        threading.Thread(
-            target=self._monitor_stream,
-            args=(self.target_process.stdout, "TARGET-OUT"),
-            daemon=True
-        ).start()
-
-        threading.Thread(
-            target=self._monitor_stream,
-            args=(self.target_process.stderr, "TARGET-ERR"),
-            daemon=True
-        ).start()
-
-    def _monitor_stream(self, stream, prefix):
-        """Monitor and log output from target process.
+    def _send_response(self, message):
+        """Send a response message to client (non-blocking).
 
         Args:
-            stream: The stream to monitor (stdout or stderr)
-            prefix: Prefix for log messages
+            message: The message to send
         """
         try:
-            for line in stream:
-                # Only print if redirection is off (avoids mixing target output with pdb session)
-                self.redirection_is_off.wait()
-                print(f"[{prefix}] {line}", end='', flush=True)
-        except Exception as e:
-            print(f"Error monitoring {prefix}: {e}")
+            # Open in non-blocking mode to avoid hanging if no client connected
+            fd = os.open(RESPONSE_PIPE, os.O_WRONLY | os.O_NONBLOCK)
+            try:
+                os.write(fd, (message + '\n').encode())
+            finally:
+                os.close(fd)
+        except (OSError, IOError):
+            # No client connected, silently ignore
+            pass
 
-    def attach_debugger(self):
-        """Attach pdb to the target process using pdb.attach()."""
+    def _create_prctl_script(self, client_pid):
+        """Create a temporary Python script that grants ptrace permission.
+
+        Args:
+            client_pid: The PID of the client to grant permission to
+
+        Returns:
+            Path to the temporary script file
+        """
+        script_content = f"""
+import ctypes
+
+PR_SET_PTRACER = 0x59616d61
+libc = ctypes.CDLL("libc.so.6")
+
+# Grant ptrace permission to client
+result = libc.prctl(PR_SET_PTRACER, {client_pid}, 0, 0, 0)
+
+# Write result for debugging (optional)
+import sys
+if result == 0:
+    print(f"[prctl] Granted ptrace permission to PID {client_pid}", flush=True)
+else:
+    print(f"[prctl] Failed to grant permission: {{result}}", file=sys.stderr, flush=True)
+"""
+
+        # Create temp file in PIPE_DIR for consistency
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            suffix='.py',
+            delete=False,
+            dir=PIPE_DIR
+        ) as f:
+            f.write(script_content)
+            return f.name
+
+    def grant_ptrace_permission(self, client_pid):
+        """Grant ptrace permission to client using sys.remote_exec().
+
+        Args:
+            client_pid: The PID of the client to grant permission to
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         # Check preconditions
-        if not self.redirection_is_off.is_set():
-            print("ERROR: Debugger already attached")
-            return
-
         if not self.target_process or self.target_process.poll() is not None:
-            print("ERROR: Target process not running")
-            return
+            print(f"ERROR: Target process not running")
+            return False
 
-        print(f"Attaching pdb to PID {self.target_process.pid}...")
+        print(f"Granting ptrace permission to client PID {client_pid}...")
 
-        # Open debug pipes
-        debug_in = None
-        debug_out = None
-
+        script_path = None
         try:
-            debug_in = open(DEBUG_IN, 'r', buffering=1)
-            debug_out = open(DEBUG_OUT, 'w', buffering=1)
+            # Create injection script
+            script_path = self._create_prctl_script(client_pid)
 
-            # Save original I/O
-            original_stdin = sys.stdin
-            original_stdout = sys.stdout
-            original_stderr = sys.stderr
+            # Inject into target process
+            sys.remote_exec(self.target_process.pid, script_path)
 
-            self.redirection_is_off.clear()
-            # Redirect to pipes
-            sys.stdin = debug_in
-            sys.stdout = debug_out
-            sys.stderr = debug_out
-            
+            # Wait for execution
+            # Note: sys.remote_exec returns immediately, code executes
+            # "at next available opportunity"
+            time.sleep(0.2)
 
-            print("Debugger attached successfully", flush=True)
-
-            # Attach debugger - BLOCKS HERE until user quits pdb
-            pdb.attach(self.target_process.pid)
+            print(f"Permission granted to client PID {client_pid}")
+            return True
 
         except Exception as e:
-            # Handle errors
-            print(f"Error attaching debugger: {e}")
+            print(f"Error granting ptrace permission: {e}")
+            return False
 
         finally:
-            # Turn off redirection (set the "off" event)
-            # This allows the monitoring thread to write output again
-            self.redirection_is_off.set()
-
-            # Restore original I/O
-            sys.stdin = original_stdin
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-
-            # Close debug pipes
-            if debug_in:
-                debug_in.close()
-            if debug_out:
-                debug_out.close()
-
-            print("Debugger session ended")
+            # Clean up temp file after delay
+            if script_path:
+                time.sleep(0.3)  # Extra delay to ensure target has read it
+                try:
+                    os.unlink(script_path)
+                except OSError:
+                    pass  # Already deleted
 
     def listen_for_commands(self):
         """Listen on control pipe for commands from client."""
@@ -169,19 +178,44 @@ class DebugController:
                 # Open control pipe for reading (blocks until client connects)
                 with open(CONTROL_PIPE, 'r') as pipe:
                     while self.running:
-                        command = pipe.readline().strip()
+                        line = pipe.readline()
+                        if not line:
+                            # Client disconnected
+                            break
+
+                        command = line.strip()
                         if not command:
                             continue
 
                         print(f"Received command: {command}")
 
-                        if command == "ATTACH":
-                            self.attach_debugger()
-                        elif command == "STOP":
+                        # Parse command
+                        parts = command.split()
+                        cmd = parts[0]
+
+                        if cmd == "GET_TARGET_PID":
+                            # Client requests target PID
+                            self._send_response(f"TARGET_PID {self.target_process.pid}")
+
+                        elif cmd == "GRANT_ACCESS" and len(parts) == 2:
+                            try:
+                                client_pid = int(parts[1])
+                                if self.grant_ptrace_permission(client_pid):
+                                    self._send_response("READY")
+                                else:
+                                    self._send_response("ERROR: Failed to grant permission")
+                            except ValueError:
+                                print(f"Invalid PID: {parts[1]}")
+                                self._send_response("ERROR: Invalid PID")
+
+                        elif cmd == "STOP":
                             self.running = False
                             break
+
                         else:
                             print(f"Unknown command: {command}")
+                            self._send_response(f"ERROR: Unknown command: {cmd}")
+
             except Exception as e:
                 if self.running:
                     print(f"Error in command listener: {e}")
@@ -200,6 +234,14 @@ class DebugController:
                 self.target_process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self.target_process.kill()
+
+        # Clean up pipes
+        try:
+            for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
+                if os.path.exists(pipe):
+                    os.unlink(pipe)
+        except OSError:
+            pass
 
         print("Cleanup complete")
 
