@@ -8,20 +8,45 @@ It can be replaced with any Python script/application.
 import time
 import os
 import sys
+import math
+from collections import defaultdict
+import logging
+import random
 
+logger = logging.getLogger(__name__)
+
+def _is_prime(n: int):
+    for k in range(2, min(n, math.ceil(n**0.5)+1)):
+        if not (n % k):
+            return False
+    return True
+
+PRIME_SEARCH_CAP = 1 * 10**6
+PRIMES_LIST = [n for n in range(2, PRIME_SEARCH_CAP) if _is_prime(n)]
+def factorize(n):
+    if n in {0,1}:
+        return {}
+    assert n <= PRIMES_LIST[-1]
+    reduced = n
+    exponents = defaultdict(lambda: 0)
+    for p in PRIMES_LIST:
+        while reduced % p == 0:
+            reduced = reduced // p
+            exponents[p] += 1
+        if reduced == 1:
+            break
+    return dict(exponents)
 
 def work_loop():
     """Simulate some work being done."""
     counter = 0
     while True:
         counter += 1
-        result = counter * 2
-        print(f"Iteration {counter}: result = {result}", flush=True)
+        n = random.randint(10**5, PRIME_SEARCH_CAP)
+        result = factorize(n)
+        logger.info(f"Iteration {counter}, number {n}")
 
-        # Sleep in small increments to allow sys.remote_exec() to inject code
-        # (injected code runs "at next available opportunity" during bytecode execution)
-        for _ in range(20):
-            time.sleep(0.1)  # 100 * 0.1 = 10 seconds total
+        time.sleep(0.1)
 
 
 def main():
@@ -30,6 +55,7 @@ def main():
     print("Starting work loop...", flush=True)
 
     try:
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s:%(message)s')
         work_loop()
     except KeyboardInterrupt:
         print("\nTarget process interrupted", flush=True)

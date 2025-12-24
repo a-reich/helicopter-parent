@@ -1,12 +1,12 @@
 """
-controller.py - V2: Controller using PR_SET_PTRACER for direct client attachment
+Main helicopter-parent controller script
 
 This script:
-1. Launches the target process (Script B)
+1. Launches the target process
 2. Creates named pipes for communication
 3. Listens for ptrace permission requests from client
 4. Uses sys.remote_exec() to inject prctl call granting client permission
-5. Client can then directly attach pdb without I/O redirection
+5. Sends response back to client
 """
 
 import os
@@ -14,20 +14,34 @@ import sys
 import subprocess
 import tempfile
 import time
+from pathlib import Path
+from enum import StrEnum, auto
+from textwrap import dedent
 
-# Check Python version
 if sys.version_info < (3, 14):
-    print("Error: Python 3.14+ required for remote debugging")
-    print(f"Current version: {sys.version}")
+    print("Error: Python 3.14+ required for remote debugging; current is {sys.version}")
     sys.exit(1)
 
 # Named pipe paths
-PIPE_DIR = "/tmp/heli_debug"
-CONTROL_PIPE = os.path.join(PIPE_DIR, "control")
-RESPONSE_PIPE = os.path.join(PIPE_DIR, "response")
+PIPE_DIR = Path("/tmp/heli_debug")
+CONTROL_PIPE = PIPE_DIR / "control"
+RESPONSE_PIPE = PIPE_DIR / "response"
 
-# PR_SET_PTRACER constant from kernel headers
-PR_SET_PTRACER = 0x59616d61  # "Yama" in hex
+# PR_SET_PTRACER constant (got the value from
+# https://github.com/torvalds/linux/blob/master/include/uapi/linux/prctl.h)
+PR_SET_PTRACER_BINARY = int.from_bytes(b'Yama') # 0x59616d61  
+
+class Command(StrEnum):
+    """Recognized commands from client."""
+    GET_TARGET_PID = auto()
+    GRANT_ACCESS = auto()
+    TERMINATE = auto()
+class Response(StrEnum):
+    """Responses to client."""
+    READY = auto()
+    ERROR = auto()
+    TARGET_PID = auto()
+
 
 
 class DebugController:
@@ -47,11 +61,11 @@ class DebugController:
 
     def create_pipes(self):
         """Create the named pipes for communication."""
-        os.makedirs(PIPE_DIR, exist_ok=True, mode=0o700)
+        PIPE_DIR.mkdir(exist_ok=True, mode=0o700)
 
         for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
-            if os.path.exists(pipe):
-                os.unlink(pipe)
+            if pipe.exists():
+                pipe.unlink()
             os.mkfifo(pipe, mode=0o600)
 
         print(f"Created pipes in {PIPE_DIR}")
@@ -61,13 +75,7 @@ class DebugController:
         cmd = [sys.executable, self.target_script] + self.target_args
         print(f"Starting target process: {' '.join(cmd)}")
 
-        self.target_process = subprocess.Popen(
-            cmd,
-            # stdout=subprocess.PIPE,
-            # stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
+        self.target_process = subprocess.Popen(cmd, text=True, bufsize=1)
 
         print(f"Target process started with PID: {self.target_process.pid}")
 
@@ -97,22 +105,17 @@ class DebugController:
         Returns:
             Path to the temporary script file
         """
-        script_content = f"""
-import ctypes
+        script_content = dedent(f"""
+            import ctypes as _heliparent_ctypes
 
-PR_SET_PTRACER = 0x59616d61
-libc = ctypes.CDLL("libc.so.6")
+            _HELIPARENT_PTRACER_BINARY = {PR_SET_PTRACER_BINARY}
+            _heliparent_libc = _heliparent_ctypes.CDLL("libc.so.6")
 
-# Grant ptrace permission to client
-result = libc.prctl(PR_SET_PTRACER, {client_pid}, 0, 0, 0)
-
-# Write result for debugging (optional)
-import sys
-if result == 0:
-    print(f"[prctl] Granted ptrace permission to PID {client_pid}", flush=True)
-else:
-    print(f"[prctl] Failed to grant permission: {{result}}", file=sys.stderr, flush=True)
-"""
+            # Run prctl system call's with PR_SET_PTRACER option to grant ptrace permission to client
+            # Result is currently ignored
+            _heliparent_libc.prctl(_HELIPARENT_PTRACER_BINARY, {client_pid}, 0, 0, 0)  
+            del _heliparent_ctypes, _heliparent_libc
+            """)
 
         # Create temp file in PIPE_DIR for consistency
         with tempfile.NamedTemporaryFile(
@@ -193,28 +196,28 @@ else:
                         parts = command.split()
                         cmd = parts[0]
 
-                        if cmd == "GET_TARGET_PID":
+                        if cmd == Command.GET_TARGET_PID:
                             # Client requests target PID
-                            self._send_response(f"TARGET_PID {self.target_process.pid}")
+                            self._send_response(f"{Response.TARGET_PID} {self.target_process.pid}")
 
-                        elif cmd == "GRANT_ACCESS" and len(parts) == 2:
+                        elif cmd == Command.GRANT_ACCESS and len(parts) == 2:
                             try:
                                 client_pid = int(parts[1])
                                 if self.grant_ptrace_permission(client_pid):
-                                    self._send_response("READY")
+                                    self._send_response(Response.READY)
                                 else:
-                                    self._send_response("ERROR: Failed to grant permission")
+                                    self._send_response(f"{Response.ERROR} : Failed to grant permission")
                             except ValueError:
                                 print(f"Invalid PID: {parts[1]}")
-                                self._send_response("ERROR: Invalid PID")
+                                self._send_response(f"{Response.ERROR} : Invalid PID")
 
-                        elif cmd == "STOP":
+                        elif cmd == Command.TERMINATE:
                             self.running = False
                             break
 
                         else:
                             print(f"Unknown command: {command}")
-                            self._send_response(f"ERROR: Unknown command: {cmd}")
+                            self._send_response(f"{Response.ERROR} : Unknown command: {cmd}")
 
             except Exception as e:
                 if self.running:
