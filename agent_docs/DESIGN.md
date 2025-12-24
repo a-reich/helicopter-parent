@@ -1,335 +1,208 @@
-# Helicopter Parent - Design Document
+# Helicopter Parent Architecture
 
-## Project Overview
+## Overview
 
-Helicopter Parent is a remote Python debugging system that enables users to attach a debugger to a running Python process on-demand. It leverages Python 3.14's new remote debugging capabilities (`pdb.attach()`) to provide an interactive debugging experience through a proxy architecture.
-
-## Problem Statement
-
-Developers often need to debug Python processes that are already running without:
-- Restarting the process with a debugger
-- Modifying the source code to add breakpoints
-- Losing the current process state
-
-Python 3.14 introduces `pdb.attach(pid)` which allows attaching to a running process, but requires direct access to that process. Helicopter Parent creates a wrapper architecture that allows users to:
-1. Start a Python process under supervision
-2. Connect from a separate interactive session later
-3. Trigger debugging on-demand
-4. Interact with the debugger as if directly attached
+Helicopter Parent is a remote debugging system for Python 3.14+ that allows you to attach a debugger to a running Python process. It uses Linux's ptrace mechanism with Yama security module integration to enable secure debugging across process boundaries.
 
 ## Architecture
 
-### Three-Process Model
+The system consists of three components:
+
+1. **Controller** - Manages the target process and grants ptrace permissions
+2. **Client** - Interactive debugger interface using `pdb.attach()`
+3. **Target** - The Python process being debugged
+
+### Communication
+
+The system uses **2 named pipes** for communication:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                                                               │
-│  Script A: controller.py (Parent/Proxy)                      │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │ • Launches and monitors Script B                     │    │
-│  │ • Creates and manages named pipes                    │    │
-│  │ • Listens for debug commands from Script C          │    │
-│  │ • Calls pdb.attach(B_PID) when requested            │    │
-│  │ • Redirects pdb I/O to pipes for Script C          │    │
-│  └─────────────────────────────────────────────────────┘    │
-│         │                                                     │
-│         │ spawns                                             │
-│         ▼                                                     │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │ Script B: target.py (or any user script)            │    │
-│  │ • The process being debugged                        │    │
-│  │ • Runs normally until debugger attaches            │    │
-│  │ • No special instrumentation needed                │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
-                         ▲
-                         │ named pipes
-                         │
-┌────────────────────────┴──────────────────────────────────┐
-│  Script C: client.py (Interactive Client)                  │
-│  ┌──────────────────────────────────────────────────────┐ │
-│  │ • Connects to controller via named pipes             │ │
-│  │ • Sends debug commands (ATTACH, STATUS, QUIT)       │ │
-│  │ • Routes user input to pdb session                  │ │
-│  │ • Displays pdb output to user                       │ │
-│  └──────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────┘
+/tmp/heliparent_debug/
+├── control      # Client → Controller: Commands
+└── response     # Controller → Client: Responses
 ```
 
-### Component Responsibilities
+## How It Works
 
-#### Script A - Controller (`controller.py`)
-**Role:** Process supervisor and I/O proxy
-
-**Responsibilities:**
-- Launch target process B and capture its PID
-- Create named pipes for inter-process communication
-- Monitor target process health
-- Listen for commands from client C
-- Execute `pdb.attach(target_pid)` when requested
-- Redirect pdb's stdin/stdout/stderr to pipes
-- Send status updates to client
-
-**Key Design Decision:** Runs `pdb.attach()` in the main thread (blocks while debugging), rather than a separate thread, to avoid complex I/O redirection issues with process-wide sys.stdin/stdout/stderr globals.
-
-#### Script B - Target (`target.py` or any Python script)
-**Role:** The process being debugged
-
-**Characteristics:**
-- Can be any Python script or application
-- Runs as a subprocess of controller
-- No special instrumentation or modifications needed
-- Continues running between debug sessions
-- Can be debugged multiple times without restarting
-
-#### Script C - Client (`client.py`)
-**Role:** User interface for debugging
-
-**Responsibilities:**
-- Connect to controller via named pipes
-- Provide interactive command interface
-- Send debug triggers (ATTACH command)
-- Route user input to debugger
-- Display debugger output
-- Handle status notifications
-
-## Communication Protocol
-
-### Named Pipes
-
-All pipes located in: `/tmp/heli_debug/`
+### 1. Initialization
 
 ```
-/tmp/heli_debug/
-├── control      # C → A: Control commands
-├── debug_in     # C → A → pdb: User input during debug session
-├── debug_out    # pdb → A → C: Debugger output to user
-└── status       # A → C: Status messages and notifications
+Controller                Client                Target
+    |                        |                     |
+    |--- Launch -----------→ |                     |
+    |                        |                     |
+    |--- Create pipes        |                     |
+    |                        |                     |
+    |                        |← Connect            |
+    |                        |                     |
+    |←- GET_TARGET_PID ------|                     |
+    |--- TARGET_PID 12345 →  |                     |
 ```
 
-### Control Commands (C → A)
-
-| Command | Description | Response |
-|---------|-------------|----------|
-| `ATTACH` | Request debugger attachment to target | `ATTACHING` → `ATTACHED` or `ERROR` |
-| `STATUS` | Query current state | `STATUS: RUNNING, Target PID: <pid>` |
-| `QUIT` | Shutdown controller | Controller exits |
-
-### Status Messages (A → C)
-
-| Status | When Sent | Meaning |
-|--------|-----------|---------|
-| `STARTED: Target PID <pid>` | Target process launched | Target is running |
-| `ATTACHING: PID <pid>` | Beginning attachment | About to call pdb.attach() |
-| `ATTACHED: Debugger session active` | pdb.attach() called | Debug session ready |
-| `DETACHED: Debugger session ended` | User quit pdb | Back to normal operation |
-| `ERROR: <message>` | Error occurred | Operation failed |
-
-### Debug I/O Flow
-
-When debug session active:
-```
-User types in client → DEBUG_IN pipe → pdb stdin → target process
-Target process → pdb stdout → DEBUG_OUT pipe → displayed to user
-```
-
-## Process Flow
-
-### Startup Sequence
+### 2. Debugging Session
 
 ```
-1. User runs: python controller.py target.py
-2. Controller creates named pipes in /tmp/heli_debug/
-3. Controller launches target.py as subprocess
-4. Controller sends STARTED status
-5. Controller enters command listening loop
-6. Target runs normally
+Client                 Controller              Target
+  |                         |                     |
+  |--- GRANT_ACCESS 67890 -→|                     |
+  |                         |                     |
+  |                         |--- remote_exec ---→ |
+  |                         |    prctl(client)    |
+  |                         |                     |
+  |← READY -----------------|                     |
+  |                         |                     |
+  |--- pdb.attach(12345) ------------------------→|
+  |                         |                     |
+  |←------ Debug Session (direct ptrace) --------→|
 ```
 
-### Debug Attach Sequence
+### 3. Permission Grant Details
 
+When the client requests to attach:
+
+1. Client sends `GRANT_ACCESS <client_pid>` command
+2. Controller uses `sys.remote_exec()` to inject code into target
+3. Injected code calls `prctl(PR_SET_PTRACER, client_pid)`
+4. This tells Yama to allow the client to ptrace the target
+5. Controller responds with `READY`
+6. Client directly calls `pdb.attach(target_pid)`
+
+The ptrace connection is **direct** between client and target - no I/O redirection needed.
+
+## Commands
+
+The client supports these interactive commands:
+
+- `attach` - Request permission and attach debugger to target
+- `quit` - Exit client (leaves controller and target running)
+- `terminate` - Stop controller, target, and exit client
+- `help` - Show command help
+
+## Command Protocol
+
+### Client → Controller (Control Pipe)
+
+- `GET_TARGET_PID` - Request the target process PID
+- `GRANT_ACCESS <pid>` - Request ptrace permission for client PID
+- `TERMINATE` - Stop controller and target
+
+### Controller → Client (Response Pipe)
+
+- `TARGET_PID <pid>` - Target process PID
+- `READY` - Permission granted, ready to attach
+- `ERROR: <message>` - Error occurred
+
+## Technical Details
+
+### PR_SET_PTRACER
+
+The system uses the Linux Yama security module's `PR_SET_PTRACER` option:
+
+```python
+PR_SET_PTRACER_BINARY = int.from_bytes(b'Yama')  # 0x59616d61
+libc.prctl(PR_SET_PTRACER_BINARY, client_pid, 0, 0, 0)
 ```
-1. User runs: python client.py (in separate terminal)
-2. Client connects to pipes
-3. User types: attach
-4. Client sends ATTACH to control pipe
-5. Controller receives ATTACH command
-6. Controller:
-   a. Opens DEBUG_IN and DEBUG_OUT pipes
-   b. Saves original sys.stdin/stdout/stderr
-   c. Redirects sys.stdin/stdout/stderr to debug pipes
-   d. Calls pdb.attach(target_pid)  [BLOCKS HERE]
-7. Client receives ATTACHED status
-8. Client opens DEBUG_IN/DEBUG_OUT pipes
-9. User interacts with pdb through client
-10. User types: quit (in pdb)
-11. pdb.attach() returns
-12. Controller restores original I/O
-13. Controller sends DETACHED status
-14. Controller returns to command listening loop
-15. Target continues running normally
+
+This allows the target to explicitly grant ptrace permission to a specific process, bypassing Yama's default restrictions.
+
+### sys.remote_exec()
+
+Python 3.14's `sys.remote_exec()` allows executing a Python script in another Python process:
+
+```python
+sys.remote_exec(target_pid, script_path)
 ```
 
-### Detach and Reattach
+The controller uses this to inject the `prctl()` call into the target process without interrupting its execution.
 
+### Direct pdb.attach()
+
+Once permission is granted, the client uses Python 3.14's native `pdb.attach()`:
+
+```python
+pdb.attach(target_pid)
 ```
-- User can quit pdb session (detach)
-- Target continues running
-- User can send ATTACH again later
-- Debugger reattaches to same process (with updated state)
-- Can inspect new variable values, stack state, etc.
+
+This provides a native pdb debugging experience with full terminal control, readline support, and proper signal handling.
+
+## Example Session
+
+### Terminal 1 (Controller)
+```bash
+$ python controller.py target.py
+Created pipes in /tmp/heliparent_debug
+Starting target process: python target.py
+Target process started with PID: 12345
+Listening for commands on control pipe...
+Received command: GET_TARGET_PID
+Received command: GRANT_ACCESS 67890
+Granting ptrace permission to client PID 67890...
+Permission granted to client PID 67890
 ```
 
-## Key Design Decisions
+### Terminal 2 (Client)
+```bash
+$ python client.py
+Client PID: 67890
+Connecting to controller...
+Target PID: 12345
 
-### 1. PDB Attachment Method: `pdb.attach()` API
+Helicopter Parent - Debug Client
+==================================================
+Commands: attach, quit, terminate
+--------------------------------------------------
+>>> attach
+Requesting ptrace permission for client PID 67890...
+✅ Permission granted
 
-**Chosen Approach:** Use `pdb.attach(pid)` function directly in controller process
+Attaching pdb to target PID 12345...
+Type pdb commands (list, next, print, etc.) or 'quit' to detach
 
-**Alternatives Considered:**
-- ❌ Subprocess `python -m pdb -p <PID>`: Complex I/O redirection between processes
-- ❌ Direct `sys.remote_exec()`: Too low-level, need to build debugging infrastructure
+> /home/user/target.py(44)work_loop()
+-> counter += 1
+(Pdb) list
+(Pdb) print(counter)
+42
+(Pdb) next
+> /home/user/target.py(45)work_loop()
+-> n = random.randint(10**5, 10**6)
+(Pdb) quit
 
-**Advantages:**
-- pdb instance runs in controller's process
-- Simple I/O redirection (just set sys.stdin/stdout before calling)
-- Direct control over pdb lifecycle
-- No subprocess management complexity
+Debugger detached
+>>> quit
+Exiting client (controller and target still running)
+Goodbye!
+```
 
-### 2. Threading Model: Main Thread Blocking
+## Design Philosophy
 
-**Chosen Approach:** Run `pdb.attach()` in main thread (blocks during debug session)
+### Simplicity
+- Minimal moving parts
+- Direct ptrace connection (no I/O redirection)
+- Simple command protocol
+- Single-threaded design
 
-**Alternative Considered:**
-- ❌ Separate thread for pdb.attach(): Allows concurrent command handling
+### Security
+- Explicit permission grant per attachment
+- Temporary permission scripts are cleaned up
+- Named pipes with restricted permissions (0600)
+- Process isolation maintained
 
-**Why Main Thread:**
-- sys.stdin/stdout/stderr are process-wide globals (not thread-local)
-- Redirecting in separate thread would affect entire process, causing race conditions
-- Concurrent command handling not needed in practice (user is debugging, not sending other commands)
-- Simpler code: ~100 fewer lines, no threading complexity
-- Limitations are acceptable:
-  - Cannot respond to STATUS while debugging (user knows they're debugging)
-  - Cannot force-abort debug session (user can quit pdb or Ctrl+C)
-  - Cannot detect target crash during debug (pdb handles this)
-
-### 3. Named Pipes vs Sockets
-
-**Chosen Approach:** Named pipes for local inter-process communication
-
-**Advantages:**
-- Simple for local debugging on same machine
-- Filesystem-based (easy to check if controller is running)
-- Low overhead
-
-**Future Extension:** Could add TCP socket support for remote debugging
-
-### 4. Single vs Multiple Debug Sessions
-
-**Chosen Approach:** Single debug session at a time
-
-**Rationale:**
-- pdb.attach() itself only supports one debugger per process
-- Simpler state management
-- Matches typical debugging workflow
+### Robustness
+- Non-blocking pipe operations where appropriate
+- Timeout handling for responses
+- Graceful cleanup on exit
+- Error reporting without crashing
 
 ## Requirements
 
-### Python Version
-- **Python 3.14+** required
-- Uses `pdb.attach()` function (new in 3.14)
-- Uses PEP 768 remote debugging capabilities
+- Python 3.14+ (for `pdb.attach()` and `sys.remote_exec()`)
+- Linux with Yama LSM (most modern distributions)
+- `/proc/sys/kernel/yama/ptrace_scope` ≤ 1
 
-### Platform
-- **Linux/Unix** (named pipes)
-- Could be adapted for Windows using named pipes (\\.\pipe\...) or sockets
+## Limitations
 
-### Permissions
-- Controller must have permission to create files in `/tmp/heli_debug/`
-- Must be able to attach to process (same user, or root)
-
-## Error Handling
-
-### Target Process Crashes
-- Controller detects process exit via `poll()`
-- Sends ERROR status to client
-- If crash during debug: pdb.attach() will error and return
-
-### Pipe Errors
-- Status pipe: Ignore errors if client not connected (fire-and-forget)
-- Control pipe: Retry with backoff on errors
-- Debug pipes: Errors cause debug session to end gracefully
-
-### pdb.attach() Failures
-- Target process not found → Send ERROR status
-- Permission denied → Send ERROR status
-- Process blocked in I/O → pdb attaches but may be unresponsive until next bytecode instruction
-
-### Python Version Mismatch
-- Check version on startup
-- Exit with clear error if < 3.14
-
-## Limitations and Caveats
-
-### 1. I/O Blocking Caveat (from Python docs)
-> "Attaching to a remote process that is blocked in a system call or waiting for I/O will only work once the next bytecode instruction is executed or when the process receives a signal."
-
-**Impact:** If target is blocked on I/O, debugger may not be immediately responsive
-
-**Mitigation:** Target can be designed to avoid long blocking calls, or user can send signal
-
-### 2. Single Debugger Session
-- Only one client can debug at a time
-- Second ATTACH request while debugging will return ERROR
-
-### 3. Controller Blocking
-- Controller cannot handle other commands while debug session active
-- This is acceptable for intended use case
-
-### 4. Local Only
-- Current design uses named pipes (local machine only)
-- Remote debugging would require socket-based implementation
-
-## Future Enhancements
-
-### Priority 1 (High Value)
-- **Multiple target processes:** Controller manages multiple targets, client selects which to debug
-- **Remote debugging:** Replace named pipes with TCP sockets
-- **Python version detection:** Auto-detect and validate 3.14+
-
-### Priority 2 (Nice to Have)
-- **Session logging:** Record debug sessions for later review
-- **Web UI:** Browser-based client instead of terminal
-- **Target monitoring:** Display CPU, memory, thread info in client
-- **Signal injection:** Send signals to unblock I/O-blocked targets
-
-### Priority 3 (Advanced)
-- **Multiple simultaneous clients:** Multiple users view same debug session (read-only)
-- **Session persistence:** Save/restore debug state
-- **Integration with existing tools:** IDE plugins, etc.
-
-## Security Considerations
-
-### Local Security
-- Pipes in `/tmp/` are world-accessible by default
-- Consider using `0700` permissions on `/tmp/heli_debug/`
-- Or use user-specific directory: `/tmp/heli_debug_$USER/`
-
-### Remote Security (if implemented)
-- Authentication required for TCP socket version
-- Encryption (TLS) for remote connections
-- Access control (who can attach debugger)
-
-## References
-
-- [Python 3.14 What's New - pdb remote attaching](https://docs.python.org/3/whatsnew/3.14.html#pdb)
-- [PEP 768 - Remote Debugging](https://peps.python.org/pep-0768/)
-- `pdb.attach()` function documentation
-- `sys.remote_exec()` function documentation
-
-## Project Status
-
-- **Current Phase:** Design Complete
-- **Next Phase:** Implementation
-- **Target Completion:** TBD
+- Linux-only (uses prctl and Yama LSM)
+- Python 3.14+ required
+- Cannot debug processes that have crashed
+- Single client at a time (shared pipes)
