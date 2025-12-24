@@ -15,16 +15,20 @@ import random
 
 logger = logging.getLogger(__name__)
 
+
 def _is_prime(n: int):
-    for k in range(2, min(n, math.ceil(n**0.5)+1)):
+    for k in range(2, min(n, math.ceil(n**0.5) + 1)):
         if not (n % k):
             return False
     return True
 
+
 PRIME_SEARCH_CAP = 1 * 10**6
 PRIMES_LIST = [n for n in range(2, PRIME_SEARCH_CAP) if _is_prime(n)]
+
+
 def factorize(n):
-    if n in {0,1}:
+    if n in {0, 1}:
         return {}
     assert n <= PRIMES_LIST[-1]
     reduced = n
@@ -37,12 +41,13 @@ def factorize(n):
             break
     return dict(exponents)
 
+
 def work_loop():
     """Simulate some work being done."""
     counter = 0
     while True:
         counter += 1
-        n = random.randint(10**5, 10**6) #PRIME_SEARCH_CAP)
+        n = random.randint(10**5, PRIME_SEARCH_CAP)
         result = factorize(n)
         logger.info(f"Iteration {counter}, number {n}")
 
@@ -55,7 +60,9 @@ def main():
     print("Starting work loop...", flush=True)
 
     try:
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s:%(message)s')
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s:%(levelname)s:%(name)s:%(message)s"
+        )
         work_loop()
     except KeyboardInterrupt:
         print("\nTarget process interrupted", flush=True)

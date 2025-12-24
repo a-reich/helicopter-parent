@@ -29,19 +29,23 @@ RESPONSE_PIPE = PIPE_DIR / "response"
 
 # PR_SET_PTRACER constant (got the value from
 # https://github.com/torvalds/linux/blob/master/include/uapi/linux/prctl.h)
-PR_SET_PTRACER_BINARY = int.from_bytes(b'Yama') # 0x59616d61  
+PR_SET_PTRACER_BINARY = int.from_bytes(b"Yama")  # 0x59616d61
+
 
 class Command(StrEnum):
     """Recognized commands from client."""
+
     GET_TARGET_PID = auto()
     GRANT_ACCESS = auto()
     TERMINATE = auto()
+
+
 class Response(StrEnum):
     """Responses to client."""
+
     READY = auto()
     ERROR = auto()
     TARGET_PID = auto()
-
 
 
 class DebugController:
@@ -89,7 +93,7 @@ class DebugController:
             # Open in non-blocking mode to avoid hanging if no client connected
             fd = os.open(RESPONSE_PIPE, os.O_WRONLY | os.O_NONBLOCK)
             try:
-                os.write(fd, (message + '\n').encode())
+                os.write(fd, (message + "\n").encode())
             finally:
                 os.close(fd)
         except (OSError, IOError):
@@ -119,10 +123,7 @@ class DebugController:
 
         # Create temp file in PIPE_DIR for consistency
         with tempfile.NamedTemporaryFile(
-            mode='w',
-            suffix='.py',
-            delete=False,
-            dir=PIPE_DIR
+            mode="w", suffix=".py", delete=False, dir=PIPE_DIR
         ) as f:
             f.write(script_content)
             return f.name
@@ -179,7 +180,7 @@ class DebugController:
         while self.running:
             try:
                 # Open control pipe for reading (blocks until client connects)
-                with open(CONTROL_PIPE, 'r') as pipe:
+                with open(CONTROL_PIPE, "r") as pipe:
                     while self.running:
                         line = pipe.readline()
                         if not line:
@@ -198,7 +199,9 @@ class DebugController:
 
                         if cmd == Command.GET_TARGET_PID:
                             # Client requests target PID
-                            self._send_response(f"{Response.TARGET_PID} {self.target_process.pid}")
+                            self._send_response(
+                                f"{Response.TARGET_PID} {self.target_process.pid}"
+                            )
 
                         elif cmd == Command.GRANT_ACCESS and len(parts) == 2:
                             try:
@@ -206,7 +209,9 @@ class DebugController:
                                 if self.grant_ptrace_permission(client_pid):
                                     self._send_response(Response.READY)
                                 else:
-                                    self._send_response(f"{Response.ERROR} : Failed to grant permission")
+                                    self._send_response(
+                                        f"{Response.ERROR} : Failed to grant permission"
+                                    )
                             except ValueError:
                                 print(f"Invalid PID: {parts[1]}")
                                 self._send_response(f"{Response.ERROR} : Invalid PID")
@@ -217,7 +222,9 @@ class DebugController:
 
                         else:
                             print(f"Unknown command: {command}")
-                            self._send_response(f"{Response.ERROR} : Unknown command: {cmd}")
+                            self._send_response(
+                                f"{Response.ERROR} : Unknown command: {cmd}"
+                            )
 
             except Exception as e:
                 if self.running:

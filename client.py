@@ -28,6 +28,7 @@ PIPE_DIR = "/tmp/heli_debug"
 
 DEFAULT_TIMEOUT = 2.0  # seconds
 
+
 class DebugClient:
     """Interactive client for remote debugging via direct pdb.attach()."""
 
@@ -43,12 +44,12 @@ class DebugClient:
         Returns:
             bool: True if controller is running, False otherwise
         """
-        if not (controller.CONTROL_PIPE.exists() & 
-                controller.RESPONSE_PIPE.exists()):
+        if not (controller.CONTROL_PIPE.exists() & controller.RESPONSE_PIPE.exists()):
             CONTROLLER_NOT_RUNNING_MSG = dedent(
                 """Error: Controller not running (pipes not found)
                 Start controller first: python controller.py <script>
-                """)
+                """
+            )
             print(CONTROLLER_NOT_RUNNING_MSG)
             return False
 
@@ -64,8 +65,8 @@ class DebugClient:
             bool: True if successful, False otherwise
         """
         try:
-            with open(controller.CONTROL_PIPE, 'w') as pipe:
-                pipe.write(command + '\n')
+            with open(controller.CONTROL_PIPE, "w") as pipe:
+                pipe.write(command + "\n")
                 pipe.flush()
             return True
         except Exception as e:
@@ -83,7 +84,7 @@ class DebugClient:
         """
         try:
             # Open response pipe for reading
-            with open(controller.RESPONSE_PIPE, 'r') as pipe:
+            with open(controller.RESPONSE_PIPE, "r") as pipe:
                 # Use select to wait for data with timeout
                 ready, _, _ = select.select([pipe], [], [], timeout)
                 if ready:
@@ -126,7 +127,9 @@ class DebugClient:
         """
         print(f"Requesting ptrace permission for client PID {self.client_pid}...")
 
-        if not self.send_command(f"{controller.Command.GRANT_ACCESS} {self.client_pid}"):
+        if not self.send_command(
+            f"{controller.Command.GRANT_ACCESS} {self.client_pid}"
+        ):
             return False
 
         # Wait for READY response
@@ -162,11 +165,13 @@ class DebugClient:
             return True
 
         except PermissionError as exc:
-            DENIED_ERR_MSG = dedent("""❌ Permission denied: {}
+            DENIED_ERR_MSG = dedent("""
+                ❌ Permission denied: {}
                 This usually means:
                 1. ptrace_scope is set too restrictively
-                2. Permission was not granted by controller or target hasn't run pending call
-                3. Check: cat /proc/sys/kernel/yama/ptrace_scope
+                    (check: cat /proc/sys/kernel/yama/ptrace_scope)
+                2. Permission was not granted by controller
+                3. Target hasn't yet run pending call (can try again)
                 """)
             print(DENIED_ERR_MSG.format(exc))
             return False
@@ -206,7 +211,9 @@ class DebugClient:
                     if self.request_permission():
                         self.attach_debugger()
                     else:
-                        print("Failed to get permission. Try again or check controller.")
+                        print(
+                            "Failed to get permission. Try again or check controller."
+                        )
 
                 elif command in ("quit", "exit"):
                     # Just exit client, leave controller and target running
@@ -276,7 +283,7 @@ def main():
     try:
         client.run()
     except RuntimeError as e:
-        if 'not running' in str(e):
+        if "not running" in str(e):
             print("Error: Controller not running. Start controller first.")
             sys.exit(1)
         else:
