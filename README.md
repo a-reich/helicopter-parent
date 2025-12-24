@@ -1,14 +1,6 @@
-# Helicopter Parent - Remote Python Debugger V2
+# Helicopter Parent - Remote Python Debugger
 
 On-demand remote debugging for Python processes using Python 3.14's `pdb.attach()` feature.
-
-## What's New in V2
-
-**V2 uses a radically simpler architecture:**
-- Client directly calls `pdb.attach()` - no I/O redirection!
-- Controller grants ptrace permission via `sys.remote_exec()` + `prctl(PR_SET_PTRACER)`
-- Full native pdb experience with colors, readline, tab completion
-- Simpler code (~40% less) with only 2 pipes instead of 3
 
 ## Overview
 
@@ -17,7 +9,11 @@ Helicopter Parent allows you to:
 - Attach a debugger to it later from a separate session
 - Debug interactively with full native pdb features
 - Detach and reattach multiple times
-- All without restarting the process!
+
+**Key Features:**
+- Client directly calls `pdb.attach()` on target
+- Controller grants ptrace permission via `sys.remote_exec()` + `prctl(PR_SET_PTRACER)`
+- Full native pdb experience with colors, readline, tab completion
 
 ## Requirements
 
@@ -35,7 +31,7 @@ python3.14 controller.py target.py
 ```
 
 This starts the controller which:
-- Creates named pipes in `/tmp/heli_debug/`
+- Creates named pipes in `/tmp/heliparent_debug/`
 - Launches `target.py` as a subprocess
 - Waits for debug commands
 
@@ -48,7 +44,7 @@ python3.14 client.py
 Available commands:
 - `attach` - Attach debugger to the target process
 - `quit` - Exit client (leave controller running)
-- `stop` - Stop controller, target, and exit client
+- `terminate` - Stop controller, target, and exit client
 - `help` - Show help message
 
 ### Example Session
@@ -62,28 +58,28 @@ Requesting ptrace permission for client PID 12346...
 Attaching pdb to target PID 12345...
 Type pdb commands (list, next, print, etc.) or 'quit' to detach
 
-> /home/user/helicopter_parent/target.py(17)work_loop()
+> /home/user/helicopter_parent/target.py(44)work_loop()
 -> counter += 1
 (Pdb) list
- 12         def work_loop():
- 13             """Simulate some work being done."""
- 14             counter = 0
- 15             while True:
- 16                 counter += 1
- 17  ->             result = counter * 2
- 18                 print(f"Iteration {counter}: result = {result}", flush=True)
- 19                 for _ in range(100):
- 20                     time.sleep(0.1)
+ 39         def work_loop():
+ 40             """Simulate some work being done."""
+ 41             counter = 0
+ 42             while True:
+ 43                 counter += 1
+ 44  ->             n = random.randint(10**5, 10**6)
+ 45                 result = factorize(n)
+ 46                 logger.info(f"Iteration {counter}, number {n}")
+ 47                 time.sleep(1)
 
 (Pdb) p counter
 42
 
 (Pdb) n
-> /home/asaf/helicopter_parent/target.py(18)work_loop()
--> result = counter * 2
+> /home/user/helicopter_parent/target.py(45)work_loop()
+-> result = factorize(n)
 
-(Pdb) p result
-84
+(Pdb) p n
+542891
 
 (Pdb) quit
 
@@ -94,33 +90,29 @@ Goodbye!
 
 ## Architecture
 
-### V2 Architecture (Current)
-
 ```
-┌──────────────┐         ┌──────────────┐         ┌──────────────┐
-│  Controller  │         │    Target    │         │    Client    │
-│              │         │   (Process   │         │              │
-│ controller.py│◄─────┐  │  to debug)   │         │  client.py   │
-│              │      │  │              │         │              │
-│  • Spawns    │      │  │  target.py   │         │  • Requests  │
-│    target    │      │  │              │         │    permission│
-│  • Injects   │      │  │              │         │  • Calls     │
-│    prctl via │      │  │              │         │    pdb.attach│
-│    sys.      │      │  │              │         │    directly! │
-│    remote_   │      │  │              │         │              │
-│    exec()    │      │  └──────────────┘         └──────────────┘
-│              │      │         ▲                        │
-└──────────────┘      │         │                        │
-       │              │         │ prctl grants           │
-       │              │         │ ptrace permission      │
-       ▼              │         │                        ▼
-Named Pipes:          │         └────────────────────────┘
-  /tmp/heli_debug/    │
-    • control ────────┘  (Client → Controller commands)
-    • response ──────────►(Controller → Client responses)
+┌──────────────┐        ┌──────────────┐         ┌──────────────┐
+│  Controller  │        │    Target    │         │    Client    │
+│              │        │   (Process   │         │              │
+│ controller.py│        │  to debug)   │         │  client.py   │
+│              │        │              │         │              │
+│  • Spawns    │        │  target.py   │         │  • Requests  │
+│    target    │        │              │         │    permission│
+│  • Injects   │        │              │         │  • Calls     │
+│    prctl via │        │              │         │    pdb.attach│
+│    sys.      │        │              │         │              │
+│    remote_   │        │              │         │              │
+│    exec()    │        └──────────────┘         └──────────────┘
+│              │               ▲                        │
+└──────────────┘               │                        │
+       │                       │ prctl grants           │
+       │                       │ ptrace permission      │
+       ▼                       │                        ▼
+Named Pipes:                   └────────────────────────┘
+/tmp/.../                       Direct ptrace connection
+  ├─ control ───► (Client → Controller)
+  └─ response ──► (Controller → Client)
 ```
-
-**Key Innovation:** Controller uses `sys.remote_exec()` to inject a prctl call into the target that grants the client ptrace permission. After that, client can attach directly without any I/O proxying!
 
 ### How It Works
 
@@ -133,13 +125,6 @@ Named Pipes:          │         └──────────────�
 4. **Client** can now call `pdb.attach(target_pid)` directly
 5. **User** interacts with native pdb in their terminal
 
-## Files
-
-- **[controller.py](controller.py)** - V2: Manages target and grants ptrace permission
-- **[client.py](client.py)** - V2: Requests permission and attaches pdb directly
-- **[target.py](target.py)** - Example target process (replace with your script)
-- **[IMPLEMENTATION_PLAN_V2.md](IMPLEMENTATION_PLAN_V2.md)** - V2 design and implementation guide
-- **[agent_docs/SIMPLIFIED.md](agent_docs/SIMPLIFIED.md)** - Architecture documentation
 
 ## Usage Patterns
 
@@ -196,6 +181,20 @@ Once attached, use standard pdb commands:
 
 See [pdb documentation](https://docs.python.org/3/library/pdb.html) for complete command reference.
 
+## Command Protocol
+
+### Client → Controller (Control Pipe)
+
+- `GET_TARGET_PID` - Request the target process PID
+- `GRANT_ACCESS <pid>` - Request ptrace permission for client PID
+- `TERMINATE` - Stop controller and target
+
+### Controller → Client (Response Pipe)
+
+- `TARGET_PID <pid>` - Target process PID
+- `READY` - Permission granted, ready to attach
+- `ERROR: <message>` - Error occurred
+
 ## Troubleshooting
 
 ### "Controller not running (pipes not found)"
@@ -220,45 +219,36 @@ cat /proc/sys/kernel/yama/ptrace_scope
 ```
 
 - `0` = Classic ptrace (permissive) - works
-- `1` = Restricted ptrace (default on most systems) - **V2 designed for this!**
+- `1` = Restricted ptrace (default on most systems) - **designed for this!**
 - `2` = Admin-only attach - requires CAP_SYS_PTRACE
 - `3` = No attach - won't work
 
-V2 is specifically designed to work with ptrace_scope=1 using PR_SET_PTRACER.
+This system is specifically designed to work with ptrace_scope=1 using PR_SET_PTRACER.
 
-### "ERROR: Target process not running"
+### "Target process not running"
 
 The target process may have crashed. Check controller output for errors.
 
 ### Debugger not responsive after attach
 
-If the target is blocked in a long C extension call, the injected prctl code may not execute immediately. The code runs "at next available opportunity" when Python bytecode executes. This is why target.py sleeps in small increments (0.1s) rather than one long sleep.
+If the target is blocked in a long C extension call, the injected prctl code may not execute immediately. The code runs "at next available opportunity" when Python bytecode executes. This is why target.py sleeps in small increments (1s) rather than one long sleep.
 
-## V2 vs V1 Comparison
+### Timeout waiting for response
 
-| Feature | V1 (I/O Redirection) | V2 (Direct Attach) |
-|---------|----------------------|---------------------|
-| **Architecture** | Controller redirects pdb I/O through pipes | Client calls pdb.attach() directly |
-| **Pipes needed** | 3 (control, debug_in, debug_out) | 2 (control, response) |
-| **Code complexity** | ~250 lines/file | ~150 lines/file |
-| **User experience** | Limited (pipe-based) | Full native pdb |
-| **Terminal features** | Basic | Colors, readline, tab completion |
-| **Threading** | Multiple I/O threads | Minimal |
-| **Dependencies** | None | Requires PR_SET_PTRACER support |
-
-**V1 files backed up as:**
-- `controller_v1_backup.py`
-- `client_v1_backup.py`
+The client has a 2-second timeout when waiting for responses from the controller. If you see timeout messages:
+- Controller may not be running
+- Target process may have crashed
+- Network filesystem issues with named pipes
 
 ## Technical Details
 
 ### PR_SET_PTRACER
 
-V2 uses the Linux Yama LSM's `PR_SET_PTRACER` prctl option to grant specific ptrace permission:
+The system uses the Linux Yama LSM's `PR_SET_PTRACER` prctl option to grant specific ptrace permission:
 
 ```python
 import ctypes
-PR_SET_PTRACER = 0x59616d61  # "Yama" in hex
+PR_SET_PTRACER = int.from_bytes(b'Yama')  # 0x59616d61
 libc = ctypes.CDLL("libc.so.6")
 libc.prctl(PR_SET_PTRACER, client_pid, 0, 0, 0)
 ```
@@ -267,7 +257,7 @@ This allows the target to explicitly grant ptrace permission to the client, bypa
 
 ### sys.remote_exec()
 
-V2 uses Python 3.14's `sys.remote_exec()` to inject code into the target:
+Python 3.14's `sys.remote_exec()` allows injecting code into the target:
 
 ```python
 import sys
@@ -278,20 +268,25 @@ sys.remote_exec(target_pid, script_path)
 
 The injected code grants ptrace permission, then the client can attach directly.
 
+### Direct pdb.attach()
+
+Once permission is granted, the client uses Python 3.14's native `pdb.attach()`:
+
+```python
+pdb.attach(target_pid)
+```
+
+This provides a native pdb debugging experience with full terminal control, readline support, and proper signal handling.
+
 ## Limitations
 
-- **Single client**: Only one client can have permission at a time (PR_SET_PTRACER limitation)
 - **Linux only**: Uses Linux-specific prctl and Yama LSM
-- **Local only**: Uses named pipes (for remote, would need sockets)
+- **Python 3.14+ required**: Relies on `pdb.attach()` and `sys.remote_exec()`
+- **Single client**: Only one client can attach at a time (shared pipes)
+- **Local only**: Uses named pipes (for remote debugging, would need sockets)
 - **ptrace_scope ≤ 1**: Requires permissive enough ptrace settings
+- **Python targets only**: Target process must be Python (for remote_exec)
 
-## Testing
-
-Automated tests:
-```bash
-python3.14 test_prctl_approach.py       # Validate prctl + sys.remote_exec
-python3.14 test_prctl_noninteractive.py # Test permission grant
-```
 
 ## References
 
@@ -301,10 +296,3 @@ python3.14 test_prctl_noninteractive.py # Test permission grant
 - [Yama LSM Documentation](https://docs.kernel.org/admin-guide/LSM/Yama.html)
 - [prctl(2) man page](https://man7.org/linux/man-pages/man2/prctl.2.html)
 
-## License
-
-This is a demonstration/educational project. Use at your own risk.
-
-## Contributing
-
-See [IMPLEMENTATION_PLAN_V2.md](IMPLEMENTATION_PLAN_V2.md) for architecture details and development guidelines.

@@ -15,7 +15,7 @@ import time
 import select
 from textwrap import dedent
 
-from controller import Command as ControllerCommand, Response as ControllerResponse
+import controller
 
 # Check Python version
 if sys.version_info < (3, 14):
@@ -25,8 +25,6 @@ if sys.version_info < (3, 14):
 
 # Same pipe paths as controller
 PIPE_DIR = "/tmp/heli_debug"
-CONTROL_PIPE = os.path.join(PIPE_DIR, "control")
-RESPONSE_PIPE = os.path.join(PIPE_DIR, "response")
 
 DEFAULT_TIMEOUT = 2.0  # seconds
 
@@ -45,16 +43,13 @@ class DebugClient:
         Returns:
             bool: True if controller is running, False otherwise
         """
-        if not os.path.exists(PIPE_DIR):
+        if not (controller.CONTROL_PIPE.exists() & 
+                controller.RESPONSE_PIPE.exists()):
             CONTROLLER_NOT_RUNNING_MSG = dedent(
                 """Error: Controller not running (pipes not found)
                 Start controller first: python controller.py <script>
                 """)
             print(CONTROLLER_NOT_RUNNING_MSG)
-            return False
-
-        if not os.path.exists(CONTROL_PIPE):
-            print("Error: Control pipe not found")
             return False
 
         return True
@@ -69,7 +64,7 @@ class DebugClient:
             bool: True if successful, False otherwise
         """
         try:
-            with open(CONTROL_PIPE, 'w') as pipe:
+            with open(controller.CONTROL_PIPE, 'w') as pipe:
                 pipe.write(command + '\n')
                 pipe.flush()
             return True
@@ -88,7 +83,7 @@ class DebugClient:
         """
         try:
             # Open response pipe for reading
-            with open(RESPONSE_PIPE, 'r') as pipe:
+            with open(controller.RESPONSE_PIPE, 'r') as pipe:
                 # Use select to wait for data with timeout
                 ready, _, _ = select.select([pipe], [], [], timeout)
                 if ready:
@@ -107,13 +102,13 @@ class DebugClient:
             int: Target PID, or None if failed
         """
         # Request target PID from controller
-        if not self.send_command(ControllerCommand.GET_TARGET_PID):
+        if not self.send_command(controller.Command.GET_TARGET_PID):
             return None
 
         # Read response
         response = self.read_response()
 
-        if response and response.startswith(ControllerResponse.TARGET_PID):
+        if response and response.startswith(controller.Response.TARGET_PID):
             try:
                 pid = int(response.split()[1])
                 print(f"Target PID: {pid}")
@@ -131,16 +126,16 @@ class DebugClient:
         """
         print(f"Requesting ptrace permission for client PID {self.client_pid}...")
 
-        if not self.send_command(f"{ControllerCommand.GRANT_ACCESS} {self.client_pid}"):
+        if not self.send_command(f"{controller.Command.GRANT_ACCESS} {self.client_pid}"):
             return False
 
         # Wait for READY response
         response = self.read_response()
 
-        if response == ControllerResponse.READY:
+        if response == controller.Response.READY:
             print("✅ Permission granted")
             return True
-        elif response and response.startswith(ControllerResponse.ERROR):
+        elif response and response.startswith(controller.Response.ERROR):
             print(f"❌ {response}")
             return False
         else:
@@ -170,7 +165,7 @@ class DebugClient:
             DENIED_ERR_MSG = dedent("""❌ Permission denied: {}
                 This usually means:
                 1. ptrace_scope is set too restrictively
-                2. Permission was not granted by controller
+                2. Permission was not granted by controller or target hasn't run pending call
                 3. Check: cat /proc/sys/kernel/yama/ptrace_scope
                 """)
             print(DENIED_ERR_MSG.format(exc))
@@ -222,7 +217,7 @@ class DebugClient:
                 elif command == "terminate":
                     # Terminate controller and target, then exit client
                     print("Terminating controller and target...")
-                    self.send_command(ControllerCommand.TERMINATE)
+                    self.send_command(controller.Command.TERMINATE)
                     self.running = False
                     break
 

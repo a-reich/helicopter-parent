@@ -42,11 +42,11 @@ def work_loop():
     counter = 0
     while True:
         counter += 1
-        n = random.randint(10**5, PRIME_SEARCH_CAP)
+        n = random.randint(10**5, 10**6) #PRIME_SEARCH_CAP)
         result = factorize(n)
         logger.info(f"Iteration {counter}, number {n}")
 
-        time.sleep(0.1)
+        time.sleep(1)
 
 
 def main():

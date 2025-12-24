@@ -23,7 +23,7 @@ if sys.version_info < (3, 14):
     sys.exit(1)
 
 # Named pipe paths
-PIPE_DIR = Path("/tmp/heli_debug")
+PIPE_DIR = Path("/tmp/heliparent_debug")
 CONTROL_PIPE = PIPE_DIR / "control"
 RESPONSE_PIPE = PIPE_DIR / "response"
 
