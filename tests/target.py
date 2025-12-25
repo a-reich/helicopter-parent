@@ -51,7 +51,7 @@ def work_loop():
         result = factorize(n)
         logger.info(f"Iteration {counter}, number {n}, factors: {result}")
 
-        time.sleep(1)
+        time.sleep(0.1)
 
 
 def main():
