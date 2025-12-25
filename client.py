@@ -11,7 +11,6 @@ This script:
 import os
 import sys
 import pdb
-import time
 import select
 from textwrap import dedent
 

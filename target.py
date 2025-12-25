@@ -49,7 +49,7 @@ def work_loop():
         counter += 1
         n = random.randint(10**5, PRIME_SEARCH_CAP)
         result = factorize(n)
-        logger.info(f"Iteration {counter}, number {n}")
+        logger.info(f"Iteration {counter}, number {n}, factors: {result}")
 
         time.sleep(1)
 

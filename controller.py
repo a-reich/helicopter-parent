@@ -68,8 +68,7 @@ class DebugController:
         PIPE_DIR.mkdir(exist_ok=True, mode=0o700)
 
         for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
-            if pipe.exists():
-                pipe.unlink()
+            pipe.unlink(missing_ok=True)
             os.mkfifo(pipe, mode=0o600)
 
         print(f"Created pipes in {PIPE_DIR}")
@@ -126,7 +125,7 @@ class DebugController:
             mode="w", suffix=".py", delete=False, dir=PIPE_DIR
         ) as f:
             f.write(script_content)
-            return f.name
+            return Path(f.name)
 
     def grant_ptrace_permission(self, client_pid):
         """Grant ptrace permission to client using sys.remote_exec().
@@ -139,22 +138,20 @@ class DebugController:
         """
         # Check preconditions
         if not self.target_process or self.target_process.poll() is not None:
-            print(f"ERROR: Target process not running")
+            print("ERROR: Target process not running")
             return False
 
         print(f"Granting ptrace permission to client PID {client_pid}...")
 
-        script_path = None
         try:
             # Create injection script
             script_path = self._create_prctl_script(client_pid)
 
             # Inject into target process
-            sys.remote_exec(self.target_process.pid, script_path)
+            sys.remote_exec(self.target_process.pid, str(script_path))
 
-            # Wait for execution
             # Note: sys.remote_exec returns immediately, code executes
-            # "at next available opportunity"
+            # "at next available opportunity", so wait a short time
             time.sleep(0.2)
 
             print(f"Permission granted to client PID {client_pid}")
@@ -163,15 +160,6 @@ class DebugController:
         except Exception as e:
             print(f"Error granting ptrace permission: {e}")
             return False
-
-        finally:
-            # Clean up temp file after delay
-            if script_path:
-                time.sleep(0.3)  # Extra delay to ensure target has read it
-                try:
-                    os.unlink(script_path)
-                except OSError:
-                    pass  # Already deleted
 
     def listen_for_commands(self):
         """Listen on control pipe for commands from client."""
@@ -192,8 +180,6 @@ class DebugController:
                             continue
 
                         print(f"Received command: {command}")
-
-                        # Parse command
                         parts = command.split()
                         cmd = parts[0]
 
@@ -246,13 +232,9 @@ class DebugController:
                 self.target_process.kill()
 
         # Clean up pipes
-        try:
-            for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
-                if os.path.exists(pipe):
-                    os.unlink(pipe)
-        except OSError:
-            pass
-
+        for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
+            pipe.unlink(missing_ok=True)
+       
         print("Cleanup complete")
 
     def run(self):
