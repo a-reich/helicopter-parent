@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 from unittest.mock import Mock
 from textwrap import dedent 
+
 import pytest
 
 @pytest.fixture
@@ -40,8 +41,8 @@ def mock_pipe_dir(monkeypatch, temp_pipe_dir):
     yield temp_pipe_dir
 
 
-@pytest.fixture
-def simple_target_script(tmp_path):
+@pytest.fixture(scope="session")
+def simple_target_script(tmp_path_factory):
     """Create minimal target script for testing.
 
     Args:
@@ -50,7 +51,7 @@ def simple_target_script(tmp_path):
     Returns:
         str: Path to the test target script
     """
-    script = tmp_path / "test_target.py"
+    script = tmp_path_factory.mktemp("target_script") / "test_target.py"
     script.write_text(dedent("""
         import time
         print("Test target started", flush=True)
