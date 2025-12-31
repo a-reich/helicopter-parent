@@ -14,7 +14,12 @@ helicopter-parent = "helicopter_parent.controller:main"
 helicopter-client = "helicopter_parent.client:main"
 
 [dependency-groups]
-dev = ["ipython", "ruff"]
+test = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "pytest-timeout>=2.2",
+]
+dev = ["ipython", "ruff", {include-group = "test"}]
 
 
 [tool.uv.build-backend]
