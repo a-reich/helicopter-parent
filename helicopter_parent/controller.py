@@ -67,6 +67,7 @@ class DebugController:
         self.target_args = target_args or []
         self.target_process = None
         self.running = True
+        self._clients_granted = set()
 
     def create_pipes(self):
         """Create the named pipes for communication."""
@@ -113,6 +114,8 @@ class DebugController:
         Returns:
             Path to the temporary script file
         """
+        # We use prefixed symbols to avoid overwriting ones in the target,
+        # and delete them at the end to not pollute the namespace
         script_content = dedent(f"""
             import ctypes as _heliparent_ctypes
 
@@ -135,26 +138,32 @@ class DebugController:
     def grant_ptrace_permission(self, client_pid):
         """Grant ptrace permission to client using sys.remote_exec().
 
+        Tracks PIDs granted; if the same one is requested again, skip.
+
         Args:
             client_pid: The PID of the client to grant permission to
 
         Returns:
-            bool: True if successful, False otherwise
+            bool: True if successful or skipped, False otherwise
         """
         # Check preconditions
+        if client_pid in self._clients_granted:
+            # TODO: make the check robust to PID recycling by getting create time of process?
+            logger.debug("Already granted client PID {client_pid}, skipping")
+            return True
         if not self.target_process or self.target_process.poll() is not None:
             logger.error("Target process not running")
             return False
 
-        logger.debug(f"Granting ptrace permission to client PID {client_pid}...")
+        logger.info(f"Granting ptrace permission to client PID {client_pid}...")
 
         try:
-            # Create injection script
             script_path = self._create_prctl_script(client_pid)
 
-            # Inject into target process
+            # Execute in target process
             sys.remote_exec(self.target_process.pid, str(script_path))
             logger.debug(f"Scheduled permission grant to client PID {client_pid}")
+            self._clients_granted.add(client_pid)
 
             # Note: sys.remote_exec returns immediately, code executes
             # "at next available opportunity", so wait a short time
@@ -172,7 +181,7 @@ class DebugController:
 
         while self.running:
             try:
-                # Open control pipe for reading (blocks until client connects)
+                # Note: pipe opening blocks until client connects
                 with open(CONTROL_PIPE, "r") as pipe:
                     while self.running:
                         line = pipe.readline()
@@ -189,7 +198,6 @@ class DebugController:
                         cmd = parts[0]
 
                         if cmd == Command.GET_TARGET_PID:
-                            # Client requests target PID
                             self._send_response(
                                 f"{Response.TARGET_PID} {self.target_process.pid}"
                             )
