@@ -30,6 +30,7 @@ PR_SET_PTRACER_BINARY = int.from_bytes(b"Yama")  # 0x59616d61
 
 logger = logging.getLogger(__name__)
 
+
 class Command(StrEnum):
     """Recognized commands from client."""
 
@@ -45,12 +46,15 @@ class Response(StrEnum):
     ERROR = auto()
     TARGET_PID = auto()
 
+
 def ensure_platform_support():
     """Check if the current platform / Python is supported."""
     if sys.platform != "linux":
         raise RuntimeError("helicopter-parent only supports Linux.")
     if sys.version_info < (3, 14):
-        raise RuntimeError("Error: Python 3.14+ required for remote debugging; current is {sys.version}")
+        raise RuntimeError(
+            "Error: Python 3.14+ required for remote debugging; current is {sys.version}"
+        )
 
 
 class DebugController:
@@ -248,7 +252,6 @@ class DebugController:
         for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
             pipe.unlink(missing_ok=True)
 
-
     def run(self):
         """Main run loop."""
         try:
@@ -263,7 +266,9 @@ class DebugController:
 
 def main():
     """Main entry point."""
-    logging.basicConfig(format="%(levelname)s:%(asctime)s:%(name)s:%(message)s", level=logging.INFO)
+    logging.basicConfig(
+        format="%(levelname)s:%(asctime)s:%(name)s:%(message)s", level=logging.INFO
+    )
 
     ensure_platform_support()
 

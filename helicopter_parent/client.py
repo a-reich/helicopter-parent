@@ -27,6 +27,7 @@ Commands: attach, quit, terminate
 """
 logger = logging.getLogger(__name__)
 
+
 class UserCommand(StrEnum):
     """Command client recognizes from user input."""
 
@@ -34,7 +35,8 @@ class UserCommand(StrEnum):
     QUIT = auto()
     TERMINATE = auto()
     HELP = auto()
-    EXIT = auto() # Alias for QUIT
+    EXIT = auto()  # Alias for QUIT
+
 
 class DebugClient:
     """Interactive client for remote debugging via direct pdb.attach()."""

@@ -1,8 +1,5 @@
 """
-target.py - Script B: The target process to be debugged
-
-This is a simple example script that runs in the background.
-It can be replaced with any Python script/application.
+Example target process to be debugged, for demos or testing.
 """
 
 import time
@@ -11,6 +8,7 @@ import sys
 import math
 from collections import defaultdict
 import random
+
 
 def _is_prime(n: int):
     for k in range(2, min(n, math.ceil(n**0.5) + 1)):
@@ -52,7 +50,7 @@ def work_loop(delay=0.1):
 
 def main():
     """Main entry point for the target process."""
-    delay = float(sys.argv[1]) if len(sys.argv)>1 else 0.1
+    delay = float(sys.argv[1]) if len(sys.argv) > 1 else 0.1
 
     print("Starting work loop...", flush=True)
 

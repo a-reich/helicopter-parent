@@ -44,7 +44,9 @@ class TestCheckControllerRunning:
 
         assert result is True
 
-    def test_controller_not_running_control_pipe_missing(self, mock_pipe_dir, monkeypatch):
+    def test_controller_not_running_control_pipe_missing(
+        self, mock_pipe_dir, monkeypatch
+    ):
         """Test returns False when control pipe missing."""
         control_pipe_mock = Mock()
         response_pipe_mock = Mock()
@@ -59,7 +61,9 @@ class TestCheckControllerRunning:
 
         assert result is False
 
-    def test_controller_not_running_response_pipe_missing(self, mock_pipe_dir, monkeypatch):
+    def test_controller_not_running_response_pipe_missing(
+        self, mock_pipe_dir, monkeypatch
+    ):
         """Test returns False when response pipe missing."""
         control_pipe_mock = Mock()
         response_pipe_mock = Mock()
@@ -578,6 +582,7 @@ class TestMain:
 
             with pytest.raises(SystemExit) as exc_info:
                 from helicopter_parent.client import main
+
                 main()
 
             assert exc_info.value.code == 0
@@ -593,6 +598,7 @@ class TestMain:
 
             with pytest.raises(SystemExit) as exc_info:
                 from helicopter_parent.client import main
+
                 main()
 
             assert exc_info.value.code == 1
@@ -609,5 +615,5 @@ class TestMain:
             # Should re-raise other RuntimeErrors
             with pytest.raises(RuntimeError, match="Some other error"):
                 from helicopter_parent.client import main
-                main()
 
+                main()

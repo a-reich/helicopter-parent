@@ -4,9 +4,10 @@ import tempfile
 from pathlib import Path
 import sys
 from unittest.mock import Mock
-from textwrap import dedent 
+from textwrap import dedent
 
 import pytest
+
 
 @pytest.fixture
 def temp_pipe_dir():
@@ -52,7 +53,8 @@ def simple_target_script(tmp_path_factory):
         str: Path to the test target script
     """
     script = tmp_path_factory.mktemp("target_script") / "test_target.py"
-    script.write_text(dedent("""
+    script.write_text(
+        dedent("""
         import time
         print("Test target started", flush=True)
         counter = 0
@@ -60,7 +62,8 @@ def simple_target_script(tmp_path_factory):
             print(f"Iteration {counter}", flush=True)
             counter += 1
             time.sleep(0.1)
-        """))
+        """)
+    )
     return str(script)
 
 

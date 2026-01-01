@@ -114,7 +114,7 @@ class TestFullSystem:
 
         # Cleanup
         controller.cleanup()
-    
+
     @pytest.mark.flaky(retries=5)
     @pytest.mark.timeout(10)
     def test_full_debugging_session_without_attach(
@@ -150,7 +150,7 @@ class TestFullSystem:
             assert permission_granted is True
 
             # Mock pdb.attach and simulate attach
-            with patch('pdb.attach', pdb_attach_mock):
+            with patch("pdb.attach", pdb_attach_mock):
                 result = client.attach_debugger()
                 assert result is True
 
@@ -163,9 +163,7 @@ class TestFullSystem:
             controller_thread.join(timeout=2.0)
             controller.cleanup()
 
-    def test_graceful_shutdown(
-        self, simple_target_script, mock_pipe_dir, monkeypatch
-    ):
+    def test_graceful_shutdown(self, simple_target_script, mock_pipe_dir, monkeypatch):
         """Test system shuts down gracefully."""
         controller = DebugController(simple_target_script)
         controller.create_pipes()
@@ -247,21 +245,17 @@ class TestFullSystem:
         # Check that error was logged
         assert "Unknown command: INVALID_COMMAND" in caplog.text
 
-    def test_target_process_actually_runs(
-        self, simple_target_script, mock_pipe_dir
-    ):
+    def test_target_process_actually_runs(self, simple_target_script, mock_pipe_dir):
         """Test that target process actually executes and produces output."""
         controller = DebugController(simple_target_script)
         controller.create_pipes()
 
         # Start target with captured output
         import subprocess
+
         cmd = [sys.executable, simple_target_script]
         process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
 
         # Give it time to start and print

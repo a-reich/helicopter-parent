@@ -38,6 +38,7 @@ class TestDebugControllerInit:
         assert controller.target_process is None
         assert controller.running is True
 
+
 class TestCreatePipes:
     """Tests for pipe creation."""
 
@@ -57,8 +58,12 @@ class TestCreatePipes:
         mkdir_mock.assert_called_once_with(exist_ok=True, mode=0o700)
 
         assert mkfifo_mock.call_count == 2
-        mkfifo_mock.assert_has_calls([call(mock_pipe_dir / "control", mode=0o600),
-                                      call(mock_pipe_dir / "response", mode=0o600)])
+        mkfifo_mock.assert_has_calls(
+            [
+                call(mock_pipe_dir / "control", mode=0o600),
+                call(mock_pipe_dir / "response", mode=0o600),
+            ]
+        )
 
         assert unlink_mock.call_count == 2
 
@@ -226,17 +231,21 @@ class TestGrantPtracePermission:
 
         assert result is False
 
+
 class TestListenForCommands:
     """Tests for command listening."""
 
     @pytest.fixture(autouse=True)
     def patch_send_response(self, mocker):
-        """Setup mock for controller._send_response that stops further iterations"""        
+        """Setup mock for controller._send_response that stops further iterations"""
+
         # use different name for instance param to avoid confusion with test class's self
         def side_effect_stop_running(controller, message):
             controller.running = False
 
-        mocked = mocker.patch("tests.unit.test_controller.DebugController._send_response", autospec=True)
+        mocked = mocker.patch(
+            "tests.unit.test_controller.DebugController._send_response", autospec=True
+        )
         mocked.side_effect = side_effect_stop_running
 
     def test_listen_get_target_pid(
@@ -245,7 +254,7 @@ class TestListenForCommands:
         """Test GET_TARGET_PID command handling."""
         # Mock pipe reading
         mock_pipe = MagicMock()
-        mock_pipe.readline.side_effect = ["get_target_pid\n", ""] 
+        mock_pipe.readline.side_effect = ["get_target_pid\n", ""]
         # the listening tests have to be told to exit or they'll hang
         # mock_pipe.readline.side_effect.append("terminate\n")
         mock_open_func = mock_open()
@@ -260,7 +269,7 @@ class TestListenForCommands:
         controller.listen_for_commands()
 
         # Verify response sent
-        controller._send_response.assert_called_with(controller,"target_pid 12345")
+        controller._send_response.assert_called_with(controller, "target_pid 12345")
 
     def test_listen_grant_access_success(
         self, mock_pipe_dir, mock_subprocess_popen, monkeypatch
@@ -306,7 +315,9 @@ class TestListenForCommands:
         controller.listen_for_commands()
 
         grant_permission_mock.assert_called_once_with(67890)
-        controller._send_response.assert_called_with(controller, "error : Failed to grant permission")
+        controller._send_response.assert_called_with(
+            controller, "error : Failed to grant permission"
+        )
 
     def test_listen_grant_access_invalid_pid(
         self, mock_pipe_dir, mock_subprocess_popen, monkeypatch
@@ -359,7 +370,9 @@ class TestListenForCommands:
 
         controller.listen_for_commands()
 
-        controller._send_response.assert_called_with(controller, "error : Unknown command: unknown_command")
+        controller._send_response.assert_called_with(
+            controller, "error : Unknown command: unknown_command"
+        )
 
     def test_listen_empty_lines_ignored(
         self, mock_pipe_dir, mock_subprocess_popen, monkeypatch
@@ -430,9 +443,7 @@ class TestCleanup:
         controller = DebugController("test.py")
         controller.start_target_process()
 
-        controller.target_process.wait.side_effect = subprocess.TimeoutExpired(
-            "cmd", 2
-        )
+        controller.target_process.wait.side_effect = subprocess.TimeoutExpired("cmd", 2)
 
         controller.cleanup()
 
@@ -451,4 +462,3 @@ class TestCleanup:
 
         assert controller.running is False
         assert unlink_mock.call_count == 2
-
