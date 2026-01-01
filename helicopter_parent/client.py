@@ -14,10 +14,18 @@ import pdb
 import select
 from textwrap import dedent
 from enum import StrEnum, auto
+import logging
 
 from . import controller
 
 DEFAULT_TIMEOUT = 2.0  # seconds
+BANNER_TEXT = """
+Helicopter Parent - Debug Client
+==================================================
+Commands: attach, quit, terminate
+--------------------------------------------------
+"""
+logger = logging.getLogger(__name__)
 
 class UserCommand(StrEnum):
     """Command client recognizes from user input."""
@@ -44,11 +52,10 @@ class DebugClient:
             bool: True if controller is running, False otherwise
         """
         if not (controller.CONTROL_PIPE.exists() & controller.RESPONSE_PIPE.exists()):
-            CONTROLLER_NOT_RUNNING_MSG = dedent(
-                """Error: Controller not running (pipes not found)
-                Start controller first: python controller.py <script>
-                """
-            )
+            CONTROLLER_NOT_RUNNING_MSG = dedent("""
+                Error: Controller not running (pipes not found)
+                Start controller first: Usage: helicopter-parent <target_script> [args...]
+                """).strip()
             print(CONTROLLER_NOT_RUNNING_MSG)
             return False
 
@@ -69,7 +76,7 @@ class DebugClient:
                 pipe.flush()
             return True
         except Exception as e:
-            print(f"Error sending command: {e}")
+            print("Error sending command")
             return False
 
     def read_response(self, timeout=DEFAULT_TIMEOUT):
@@ -92,7 +99,7 @@ class DebugClient:
                     print("Timeout waiting for response")
                     return None
         except Exception as e:
-            print(f"Error reading response fron controller: {e}")
+            print(f"Error reading response from controller: {e}")
         return None
 
     def get_target_pid(self):
@@ -111,7 +118,6 @@ class DebugClient:
         if response and response.startswith(controller.Response.TARGET_PID):
             try:
                 pid = int(response.split()[1])
-                print(f"Target PID: {pid}")
                 return pid
             except (IndexError, ValueError):
                 print(f"Invalid TARGET_PID response: {response}")
@@ -124,7 +130,6 @@ class DebugClient:
         Returns:
             bool: True if permission granted, False otherwise
         """
-        print(f"Requesting ptrace permission for client PID {self.client_pid}...")
 
         if not self.send_command(
             f"{controller.Command.GRANT_ACCESS} {self.client_pid}"
@@ -135,7 +140,7 @@ class DebugClient:
         response = self.read_response()
 
         if response == controller.Response.READY:
-            print("✅ Permission granted")
+            print("✅ Permission grant scheduled")
             return True
         elif response and response.startswith(controller.Response.ERROR):
             print(f"❌ {response}")
@@ -147,7 +152,7 @@ class DebugClient:
     def attach_debugger(self):
         """Attach pdb directly to target process."""
         if not self.target_pid:
-            print("Error: Target PID not known")
+            print("Target PID not known")
             return False
 
         ATTACH_MSG = dedent("""
@@ -160,24 +165,24 @@ class DebugClient:
             pdb.attach(self.target_pid)
 
             # When pdb.attach() returns, user has quit the debugger
-            print("\nDebugger detached")
+            print("Debugger detached")
             return True
 
         except PermissionError as exc:
             DENIED_ERR_MSG = dedent("""
-                ❌ Permission denied: {}
-                This usually means:
-                1. ptrace_scope is set too restrictively
+                ❌ Permission to attach denied: {}
+                This usually means either:
+                1. Target hasn't yet run the pending grant call (can try again)
+                2. ptrace_scope is set too restrictively
                     (check: cat /proc/sys/kernel/yama/ptrace_scope)
-                2. Permission was not granted by controller
-                3. Target hasn't yet run pending call (can try again)
+                3. Permission was not granted by controller
                 """)
             print(DENIED_ERR_MSG.format(exc))
             return False
 
         except ProcessLookupError:
             PROCESS_NOT_FOUND_MSG = dedent("""
-                ❌ Target process {} not found
+                ❌ Target process {} not found 
                 The target may have crashed or exited
                 """)
             print(PROCESS_NOT_FOUND_MSG.format(self.target_pid))
@@ -189,13 +194,7 @@ class DebugClient:
 
     def run_interactive(self):
         """Run the interactive command loop."""
-        BANNER = dedent("""
-            Helicopter Parent - Debug Client
-            ==================================================
-            Commands: attach, quit, terminate
-            --------------------------------------------------
-            """)
-        print(BANNER)
+        print(BANNER_TEXT)
 
         while self.running:
             try:
@@ -209,9 +208,7 @@ class DebugClient:
                     if self.request_permission():
                         self.attach_debugger()
                     else:
-                        print(
-                            "Failed to get permission. Try again or check controller."
-                        )
+                        print("Failed to get permission. Try again or check controller")
 
                 elif command in (UserCommand.QUIT, UserCommand.EXIT):
                     # Just exit client, leave controller and target running
@@ -244,18 +241,16 @@ class DebugClient:
                     print(UNKNOWN_CMD_MSG.format(command))
 
             except EOFError:
-                print()
+                print("EOF received")
                 break
             except KeyboardInterrupt:
-                print("\nInterrupted")
+                print("Interrupted")
                 break
 
     def run(self):
         """Main run method."""
         if not self.check_controller_running():
             raise RuntimeError("Controller not running")
-
-        print(f"Client PID: {self.client_pid}")
 
         # Connect to both pipes to trigger controller to send TARGET_PID
         # We need to connect to response pipe first, then controller will send
@@ -277,15 +272,12 @@ class DebugClient:
 
 def main():
     """Main entry point."""
-    if sys.version_info < (3, 14):
-        raise RuntimeError(f"Python 3.14+ required for remote debugging (current version: {sys.version})")
 
     client = DebugClient()
     try:
         client.run()
     except RuntimeError as e:
         if "not running" in str(e):
-            print("Error: Controller not running. Start controller first.")
             sys.exit(1)
         else:
             raise

@@ -20,27 +20,6 @@ from helicopter_parent.client import DebugClient
 class TestFullSystem:
     """End-to-end tests with real processes and communication."""
 
-    # @pytest.fixture
-    # def temp_pipe_dir_e2e(self, tmp_path):
-    #     """Create a unique temporary pipe directory for each test."""
-    #     pipe_dir = tmp_path / "heliparent_debug"
-    #     pipe_dir.mkdir(mode=0o700)
-    #     return pipe_dir
-
-    # @pytest.fixture
-    # def patch_pipe_paths(self, monkeypatch, temp_pipe_dir_e2e):
-    #     """Patch pipe paths to use temporary directory."""
-    #     from helicopter_parent import controller, client
-
-    #     monkeypatch.setattr(controller, "PIPE_DIR", temp_pipe_dir_e2e)
-    #     monkeypatch.setattr(controller, "CONTROL_PIPE", temp_pipe_dir_e2e / "control")
-    #     monkeypatch.setattr(controller, "RESPONSE_PIPE", temp_pipe_dir_e2e / "response")
-
-    #     # Also patch client's reference to controller pipes
-    #     yield temp_pipe_dir_e2e
-
-
-
     def test_controller_starts_and_stops_target(
         self, simple_target_script, mock_pipe_dir
     ):
@@ -125,7 +104,6 @@ class TestFullSystem:
         # sys.remote_exec requires the interpreter to be running
         time.sleep(0.2)
 
-        # Grant permission using real sys.remote_exec
         result = controller.grant_ptrace_permission(client_pid)
 
         assert result is True
@@ -232,7 +210,7 @@ class TestFullSystem:
         assert result is False
 
     def test_error_handling_invalid_command(
-        self, simple_target_script, mock_pipe_dir, capsys
+        self, simple_target_script, mock_pipe_dir, caplog
     ):
         """Test controller handles invalid commands gracefully."""
         controller = DebugController(simple_target_script)
@@ -256,7 +234,7 @@ class TestFullSystem:
             # Give time for controller to process
             time.sleep(0.2)
 
-            # Controller should have printed error message
+            # Controller should have logged error message
             # We can't reliably read the pipe response due to timing,
             # but we can verify the controller didn't crash
             assert controller_thread.is_alive()
@@ -267,8 +245,7 @@ class TestFullSystem:
             controller.cleanup()
 
         # Check that error was logged
-        captured = capsys.readouterr()
-        assert "Unknown command: INVALID_COMMAND" in captured.out
+        assert "Unknown command: INVALID_COMMAND" in caplog.text
 
     def test_target_process_actually_runs(
         self, simple_target_script, mock_pipe_dir

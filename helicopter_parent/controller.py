@@ -17,10 +17,7 @@ import time
 from pathlib import Path
 from enum import StrEnum, auto
 from textwrap import dedent
-
-if sys.version_info < (3, 14):
-    print("Error: Python 3.14+ required for remote debugging; current is {sys.version}")
-    sys.exit(1)
+import logging
 
 # Named pipe paths
 PIPE_DIR = Path("/tmp/heliparent_debug")
@@ -31,6 +28,7 @@ RESPONSE_PIPE = PIPE_DIR / "response"
 # https://github.com/torvalds/linux/blob/master/include/uapi/linux/prctl.h)
 PR_SET_PTRACER_BINARY = int.from_bytes(b"Yama")  # 0x59616d61
 
+logger = logging.getLogger(__name__)
 
 class Command(StrEnum):
     """Recognized commands from client."""
@@ -46,6 +44,13 @@ class Response(StrEnum):
     READY = auto()
     ERROR = auto()
     TARGET_PID = auto()
+
+def ensure_platform_support():
+    """Check if the current platform / Python is supported."""
+    if sys.platform != "linux":
+        raise RuntimeError("helicopter-parent only supports Linux.")
+    if sys.version_info < (3, 14):
+        raise RuntimeError("Error: Python 3.14+ required for remote debugging; current is {sys.version}")
 
 
 class DebugController:
@@ -71,16 +76,16 @@ class DebugController:
             pipe.unlink(missing_ok=True)
             os.mkfifo(pipe, mode=0o600)
 
-        print(f"Created pipes in {PIPE_DIR}")
+        logger.info(f"Created pipes in {PIPE_DIR}")
 
     def start_target_process(self):
         """Launch the target process (Script B)."""
         cmd = [sys.executable, self.target_script] + self.target_args
-        print(f"Starting target process: {' '.join(cmd)}")
+        logger.debug(f"Starting target process: {' '.join(cmd)}")
 
         self.target_process = subprocess.Popen(cmd, text=True, bufsize=1)
 
-        print(f"Target process started with PID: {self.target_process.pid}")
+        logger.info(f"Target process started with PID: {self.target_process.pid}")
 
     def _send_response(self, message):
         """Send a response message to client (non-blocking).
@@ -138,10 +143,10 @@ class DebugController:
         """
         # Check preconditions
         if not self.target_process or self.target_process.poll() is not None:
-            print("ERROR: Target process not running")
+            logger.error("Target process not running")
             return False
 
-        print(f"Granting ptrace permission to client PID {client_pid}...")
+        logger.debug(f"Granting ptrace permission to client PID {client_pid}...")
 
         try:
             # Create injection script
@@ -149,21 +154,21 @@ class DebugController:
 
             # Inject into target process
             sys.remote_exec(self.target_process.pid, str(script_path))
+            logger.debug(f"Scheduled permission grant to client PID {client_pid}")
 
             # Note: sys.remote_exec returns immediately, code executes
             # "at next available opportunity", so wait a short time
             time.sleep(0.2)
 
-            print(f"Permission granted to client PID {client_pid}")
             return True
 
         except Exception as e:
-            print(f"Error granting ptrace permission: {e}")
+            logger.error(f"Error granting ptrace permission: {e}")
             return False
 
     def listen_for_commands(self):
         """Listen on control pipe for commands from client."""
-        print("Listening for commands on control pipe...")
+        logger.info("Listening for commands on control pipe...")
 
         while self.running:
             try:
@@ -179,7 +184,7 @@ class DebugController:
                         if not command:
                             continue
 
-                        print(f"Received command: {command}")
+                        logger.debug(f"Received command: {command}")
                         parts = command.split()
                         cmd = parts[0]
 
@@ -199,7 +204,7 @@ class DebugController:
                                         f"{Response.ERROR} : Failed to grant permission"
                                     )
                             except ValueError:
-                                print(f"Invalid PID: {parts[1]}")
+                                logger.warning(f"Invalid PID: {parts[1]}")
                                 self._send_response(f"{Response.ERROR} : Invalid PID")
 
                         elif cmd == Command.TERMINATE:
@@ -207,24 +212,24 @@ class DebugController:
                             break
 
                         else:
-                            print(f"Unknown command: {command}")
+                            logger.warning(f"Unknown command: {command}")
                             self._send_response(
                                 f"{Response.ERROR} : Unknown command: {cmd}"
                             )
 
             except Exception as e:
                 if self.running:
-                    print(f"Error in command listener: {e}")
+                    logger.error(f"Error in command listener: {e}")
                     time.sleep(1)
 
     def cleanup(self):
         """Clean up processes and pipes."""
-        print("\nCleaning up...")
+        logger.debug("Cleaning up...")
 
         self.running = False
 
         if self.target_process:
-            print("Terminating target process...")
+            logger.info("Terminating target process...")
             self.target_process.terminate()
             try:
                 self.target_process.wait(timeout=2)
@@ -234,8 +239,7 @@ class DebugController:
         # Clean up pipes
         for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
             pipe.unlink(missing_ok=True)
-       
-        print("Cleanup complete")
+
 
     def run(self):
         """Main run loop."""
@@ -244,16 +248,19 @@ class DebugController:
             self.start_target_process()
             self.listen_for_commands()
         except KeyboardInterrupt:
-            print("\nController interrupted")
+            logger.info("Controller interrupted")
         finally:
             self.cleanup()
 
 
 def main():
     """Main entry point."""
+    logging.basicConfig(format="%(levelname)s:%(asctime)s:%(name)s:%(message)s", level=logging.INFO)
+
+    ensure_platform_support()
+
     if len(sys.argv) < 2:
-        print("Usage: python controller.py <target_script> [args...]")
-        print("Example: python controller.py target.py")
+        print("Usage: helicopter-parent <target_script> [args...]")
         sys.exit(1)
 
     target_script = sys.argv[1]

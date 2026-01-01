@@ -10,11 +10,7 @@ import os
 import sys
 import math
 from collections import defaultdict
-import logging
 import random
-
-logger = logging.getLogger(__name__)
-
 
 def _is_prime(n: int):
     for k in range(2, min(n, math.ceil(n**0.5) + 1)):
@@ -42,28 +38,26 @@ def factorize(n):
     return dict(exponents)
 
 
-def work_loop():
+def work_loop(delay=0.1):
     """Simulate some work being done."""
     counter = 0
     while True:
         counter += 1
         n = random.randint(10**5, PRIME_SEARCH_CAP)
         result = factorize(n)
-        logger.info(f"Iteration {counter}, number {n}, factors: {result}")
+        print(f"Iteration {counter}, number {n}, factors: {result}")
 
-        time.sleep(0.1)
+        time.sleep(delay)
 
 
 def main():
     """Main entry point for the target process."""
-    print(f"Target process started (PID: {os.getpid()})", flush=True)
+    delay = float(sys.argv[1]) if len(sys.argv)>1 else 0.1
+
     print("Starting work loop...", flush=True)
 
     try:
-        logging.basicConfig(
-            level=logging.INFO, format="%(asctime)s:%(levelname)s:%(name)s:%(message)s"
-        )
-        work_loop()
+        work_loop(delay)
     except KeyboardInterrupt:
         print("\nTarget process interrupted", flush=True)
     except Exception as e:
