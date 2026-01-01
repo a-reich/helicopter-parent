@@ -1,11 +1,9 @@
 """Unit tests for helicopter_parent.client module."""
 
 import os
-import sys
 import pdb
 import select
-from pathlib import Path
-from unittest.mock import Mock, MagicMock, mock_open, patch, call
+from unittest.mock import Mock, MagicMock, mock_open, patch
 import pytest
 
 from helicopter_parent.client import DebugClient, DEFAULT_TIMEOUT
@@ -170,7 +168,7 @@ class TestReadResponse:
         monkeypatch.setattr("builtins.open", mock_open_func)
 
         client = DebugClient()
-        result = client.read_response()  # No timeout specified
+        client.read_response()  # No timeout specified
 
         # Check default timeout was used
         select_mock.assert_called_once_with([mock_pipe], [], [], DEFAULT_TIMEOUT)
@@ -518,7 +516,7 @@ class TestRun:
         client.get_target_pid = get_target_pid_mock
         client.run_interactive = run_interactive_mock
 
-        result = client.run()
+        client.run()
 
         check_controller_mock.assert_called_once()
         get_target_pid_mock.assert_called_once()

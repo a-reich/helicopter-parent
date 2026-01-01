@@ -5,17 +5,12 @@ import sys
 import subprocess
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, mock_open, patch, call
+from unittest.mock import Mock, MagicMock, mock_open, call
 import pytest
 
 from helicopter_parent.controller import (
     DebugController,
-    Command,
-    Response,
     PR_SET_PTRACER_BINARY,
-    PIPE_DIR,
-    CONTROL_PIPE,
-    RESPONSE_PIPE,
 )
 
 

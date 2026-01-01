@@ -77,7 +77,7 @@ class DebugClient:
                 pipe.write(command + "\n")
                 pipe.flush()
             return True
-        except Exception as e:
+        except Exception:
             print("Error sending command")
             return False
 

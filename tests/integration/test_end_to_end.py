@@ -7,13 +7,11 @@ sys.remote_exec(). Only pdb.attach() is mocked since it's interactive.
 import os
 import sys
 import time
-import signal
 import threading
-from pathlib import Path
 from unittest.mock import Mock, patch
 import pytest
 
-from helicopter_parent.controller import DebugController, Command, Response
+from helicopter_parent.controller import DebugController, Command
 from helicopter_parent.client import DebugClient
 
 
@@ -97,7 +95,6 @@ class TestFullSystem:
         controller.create_pipes()
         controller.start_target_process()
 
-        target_pid = controller.target_process.pid
         client_pid = os.getpid()
 
         # Give target process time to actually start the interpreter

@@ -3,7 +3,6 @@ Example target process to be debugged, for demos or testing.
 """
 
 import time
-import os
 import sys
 import math
 from collections import defaultdict
