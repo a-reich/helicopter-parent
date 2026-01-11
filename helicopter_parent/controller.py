@@ -20,7 +20,8 @@ from textwrap import dedent
 import logging
 
 # Named pipe paths
-PIPE_DIR = Path("/tmp/heliparent_debug")
+PIPE_DIR_ALL = Path("/tmp/heliparent_debug")
+PIPE_DIR = PIPE_DIR_ALL / ("user_" + os.environ['USER']) # TODO: better way to get user name
 CONTROL_PIPE = PIPE_DIR / "control"
 RESPONSE_PIPE = PIPE_DIR / "response"
 
@@ -47,7 +48,7 @@ class Response(StrEnum):
     TARGET_PID = auto()
 
 
-def ensure_platform_support():
+def confirm_platform_support():
     """Check if the current platform / Python is supported."""
     if sys.platform != "linux":
         raise RuntimeError("helicopter-parent only supports Linux.")
@@ -75,6 +76,7 @@ class DebugController:
 
     def create_pipes(self):
         """Create the named pipes for communication."""
+        PIPE_DIR_ALL.mkdir(exist_ok=True)
         PIPE_DIR.mkdir(exist_ok=True, mode=0o700)
 
         for pipe in (CONTROL_PIPE, RESPONSE_PIPE):
@@ -270,7 +272,7 @@ def main():
         format="%(levelname)s:%(asctime)s:%(name)s:%(message)s", level=logging.INFO
     )
 
-    ensure_platform_support()
+    confirm_platform_support()
 
     if len(sys.argv) < 2:
         print("Usage: helicopter-parent <target_script> [args...]")

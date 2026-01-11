@@ -50,7 +50,7 @@ class TestCreatePipes:
         controller = DebugController("test.py")
         controller.create_pipes()
 
-        mkdir_mock.assert_called_once_with(exist_ok=True, mode=0o700)
+        mkdir_mock.assert_called_with(exist_ok=True, mode=0o700)
 
         assert mkfifo_mock.call_count == 2
         mkfifo_mock.assert_has_calls(
