@@ -18,10 +18,11 @@ from pathlib import Path
 from enum import StrEnum, auto
 from textwrap import dedent
 import logging
+from getpass import getuser
 
 # Named pipe paths
 PIPE_DIR_ALL = Path("/tmp/heliparent_debug")
-PIPE_DIR = PIPE_DIR_ALL / ("user_" + os.environ['USER']) # TODO: better way to get user name
+PIPE_DIR = PIPE_DIR_ALL / ("user_" + getuser())
 CONTROL_PIPE = PIPE_DIR / "control"
 RESPONSE_PIPE = PIPE_DIR / "response"
 

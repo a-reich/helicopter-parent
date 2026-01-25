@@ -1,50 +1,42 @@
-# Helicopter Parent - Remote Python Debugger
+# helicopter-parent - Helper for External Python Debugging with Linux Security Restrictions  
 
-On-demand remote debugging for Python processes using Python 3.14's `pdb.attach()` feature.
+Python 3.14's [PEP 768](https://peps.python.org/pep-0768/) feature and accompanying `pdb` capability support on-demand external debugging for Python processes, but common Linux security restrictions make this awkward to use (without root privileges) for long jobs. This is a lightweight helper that manages processes for you to make the experience effectively as user-friendly as without the system restrictions: it can run any Python job and lets you launch a REPL from which you can debug it with Pdb. 
 
 ## Overview
 
-Helicopter Parent allows you to:
-- Start a Python process under supervision
-- Attach a debugger to it later from a separate session
-- Debug interactively with full native pdb features
+`helicopter-parent` allows you to:
+- Start a Python job under supervision; it does not have to remain connected to an interactive terminal
+- Attach a debugger to it later from a separate client session
+- Debug interactively with full pdb features
 - Detach and reattach multiple times
-
-**Key Features:**
-- Client directly calls `pdb.attach()` on target
-- Controller grants ptrace permission via `sys.remote_exec()` + `prctl(PR_SET_PTRACER)`
-- Full native pdb experience with colors, readline, tab completion
+- Terminate the Python job and parent when ready
 
 ## Requirements
 
-- **Python 3.14+** (uses `pdb.attach()` and `sys.remote_exec()` from PEP 768)
-- **Linux with Yama LSM** (uses `prctl(PR_SET_PTRACER)`)
-- **ptrace_scope ≤ 1** (check with `cat /proc/sys/kernel/yama/ptrace_scope`)
-- Same user running both controller and client
+- **Python 3.14+** (uses `sys.remote_exec()` and `pdb.attach()` from PEP 768)
+- **Linux with Yama LSM** (uses `prctl(PR_SET_PTRACER)`; MacOS doesn't support full ptrace features)
+- **ptrace_scope ≤ 1** (check with `cat /proc/sys/kernel/yama/ptrace_scope`; if 0 `helicopter-parent` is not necessary)
+- **Same user** running both supervisor and client
 
 ## Quick Start
 
-### Terminal 1: Start the Controller
+### Terminal 1: Start the Supervisor
 
 ```bash
-python3.14 controller.py target.py
+helicopter-parent target.py
 ```
 
-This starts the controller which:
-- Creates named pipes in `/tmp/heliparent_debug/`
-- Launches `target.py` as a subprocess
-- Waits for debug commands
+This starts the supervisor which itself launches `target.py` as a subprocess, and then waits for a client to connect.
 
 ### Terminal 2: Connect the Client
 
 ```bash
-python3.14 client.py
+helicopter-client
 ```
-
-Available commands:
+This will attempt to connect to the running supervisor and then display an interactive command prompt. The client commands are:
 - `attach` - Attach debugger to the target process
-- `quit` - Exit client (leave controller running)
-- `terminate` - Stop controller, target, and exit client
+- `quit` - Exit client (leave supervisor running)
+- `terminate` - Stop supervisor, target, and exit client
 - `help` - Show help message
 
 ### Example Session
@@ -74,27 +66,45 @@ Type pdb commands (list, next, print, etc.) or 'quit' to detach
 (Pdb) p counter
 42
 
-(Pdb) n
-> /home/user/helicopter_parent/target.py(45)work_loop()
--> result = factorize(n)
-
-(Pdb) p n
-542891
-
 (Pdb) quit
 
 Debugger detached
 >>> quit
-Goodbye!
+Exiting client (supervisor and target still running)
 ```
 
-## Architecture
+## Technical details
+
+This section should not be necessary in order to use the helper, but is relevant if you'd like to know more about the underlying Operating Sytem feature, the restrictions under which `helicopter-parent` is valuable, and its internal design. 
+
+### Background and Purpose
+The feature introduced in PEP 768 uses OS-level capabilities that allow to interrupt a running process from the outside and execute any code within it; on Unix platforms the system call for this is named `ptrace` (there's a similar feature on Windows which is out of scope here.) The new feature essentially created a bridge between low-level native code and Python sessions, so that the debugger can understand the Python state of the target process, hook into the interpreter to have it execute the user's code, and send results back.
+
+This is very useful if one doesn't control the full code getting run so the traditional method of inserting breakpoints into the actual source code to trigger debuggers at certain points doesn't work, or if one doesn't know in advance before the job is run whether or where to halt it for debugging but wants to be able to "on the fly" if it shows concerning behavior. 
+
+Because the `ptrace` capability is very powerful, many distributions include a Linux Security Module defining a setting, `ptrace_scope`, that restricts which processes can call it on a particular target. The options are:
+
+- 0, AKA "classic" ptrace permissions: A process can be traced by any other process owned by the same user.
+- 1, "restricted": Can only be traced by its own parent process and ancestors; or processes it has explicitly registered permission for.
+- 2, "admin-only": Tracing requires special privileges typically set only for the root user (who can also trace under the settings above.)
+- 3, "no attach": Tracing is disabled.
+
+The goal of `helicopter-parent` is to help with **case 1**.
+In this situation, if you want to be able to debug your Python job as a non-root user, it is rather awkward. You _could_ do so as the parent process - i.e. from an interactive REPL, use `subprocess` to launch Python with some script, then whenever needed call `pdb.attach()` to enter a PDB session. _But_, that method has the disadvantage that the originating session must be kept for as long as you might need to debug the job, which is inconvenient for long-running jobs (not to mention one might accidentally close the tab/window.). 
+
+The advantage of `helicopter-parent` is that it can run _in the background_ and detect a client REPL that you launch _whenever you want_, arranging permission for you to attach from there. 
+
+### Security
+
+
+### Architecture
+
 
 ```
 ┌──────────────┐        ┌──────────────┐         ┌──────────────┐
-│  Controller  │        │    Target    │         │    Client    │
+│  supervisor  │        │    Target    │         │    Client    │
 │              │        │   (Process   │         │              │
-│ controller.py│        │  to debug)   │         │  client.py   │
+│ supervisor.py│        │  to debug)   │         │  client.py   │
 │              │        │              │         │              │
 │  • Spawns    │        │  target.py   │         │  • Requests  │
 │    target    │        │              │         │    permission│
@@ -110,135 +120,21 @@ Goodbye!
        ▼                       │                        ▼
 Named Pipes:                   └────────────────────────┘
 /tmp/.../                       Direct ptrace connection
-  ├─ control ───► (Client → Controller)
-  └─ response ──► (Controller → Client)
+  ├─ control ───► (Client → Supervisor)
+  └─ response ──► (Supervisor → Client)
 ```
 
 ### How It Works
 
-1. **Controller** spawns target process
+1. **Supervisor** spawns target process
 2. **Client** connects and sends `GRANT_ACCESS <client_pid>`
-3. **Controller** uses `sys.remote_exec(target_pid, script)` to inject:
+3. **Supervisor** uses `sys.remote_exec(target_pid, script)` to inject:
    ```python
    prctl(PR_SET_PTRACER, client_pid)  # Grant permission
    ```
 4. **Client** can now call `pdb.attach(target_pid)` directly
 5. **User** interacts with native pdb in their terminal
 
-
-## Usage Patterns
-
-### Debug Your Own Script
-
-Replace `target.py` with any Python script:
-
-```bash
-python3.14 controller.py my_script.py --arg1 value1
-```
-
-The controller will launch your script and you can attach to it later.
-
-### Multiple Attach/Detach Cycles
-
-You can attach, debug, quit pdb, and reattach multiple times:
-
-```bash
->>> attach
-(Pdb) p some_variable
-42
-(Pdb) quit
-
-# Target keeps running...
-
->>> attach
-(Pdb) p some_variable
-156  # Value changed while target was running
-(Pdb) quit
-```
-
-### Debugging Long-Running Processes
-
-Perfect for debugging:
-- Web servers
-- Background workers
-- Data processing pipelines
-- Any process that runs continuously
-
-## PDB Commands Reference
-
-Once attached, use standard pdb commands:
-
-- `list` / `l` - Show source code
-- `next` / `n` - Execute next line
-- `step` / `s` - Step into function
-- `continue` / `c` - Continue execution
-- `break` / `b` - Set breakpoint
-- `print` / `p` - Print expression
-- `where` / `w` - Show stack trace
-- `up` / `u` - Go up stack frame
-- `down` / `d` - Go down stack frame
-- `quit` / `q` - Detach debugger
-
-See [pdb documentation](https://docs.python.org/3/library/pdb.html) for complete command reference.
-
-## Command Protocol
-
-### Client → Controller (Control Pipe)
-
-- `GET_TARGET_PID` - Request the target process PID
-- `GRANT_ACCESS <pid>` - Request ptrace permission for client PID
-- `TERMINATE` - Stop controller and target
-
-### Controller → Client (Response Pipe)
-
-- `TARGET_PID <pid>` - Target process PID
-- `READY` - Permission granted, ready to attach
-- `ERROR: <message>` - Error occurred
-
-## Troubleshooting
-
-### "Controller not running (pipes not found)"
-
-Start the controller first:
-```bash
-python3.14 controller.py target.py
-```
-
-### "Python 3.14+ required"
-
-This project requires Python 3.14 or later for `pdb.attach()` and `sys.remote_exec()`. Check your version:
-```bash
-python3.14 --version
-```
-
-### "Permission denied" when attaching
-
-Check your ptrace_scope setting:
-```bash
-cat /proc/sys/kernel/yama/ptrace_scope
-```
-
-- `0` = Classic ptrace (permissive) - works
-- `1` = Restricted ptrace (default on most systems) - **designed for this!**
-- `2` = Admin-only attach - requires CAP_SYS_PTRACE
-- `3` = No attach - won't work
-
-This system is specifically designed to work with ptrace_scope=1 using PR_SET_PTRACER.
-
-### "Target process not running"
-
-The target process may have crashed. Check controller output for errors.
-
-### Debugger not responsive after attach
-
-If the target is blocked in a long C extension call, the injected prctl code may not execute immediately. The code runs "at next available opportunity" when Python bytecode executes. This is why target.py sleeps in small increments (1s) rather than one long sleep.
-
-### Timeout waiting for response
-
-The client has a 2-second timeout when waiting for responses from the controller. If you see timeout messages:
-- Controller may not be running
-- Target process may have crashed
-- Network filesystem issues with named pipes
 
 ## Technical Details
 
@@ -278,14 +174,6 @@ pdb.attach(target_pid)
 
 This provides a native pdb debugging experience with full terminal control, readline support, and proper signal handling.
 
-## Limitations
-
-- **Linux only**: Uses Linux-specific prctl and Yama LSM
-- **Python 3.14+ required**: Relies on `pdb.attach()` and `sys.remote_exec()`
-- **Single client**: Only one client can attach at a time (shared pipes)
-- **Local only**: Uses named pipes (for remote debugging, would need sockets)
-- **ptrace_scope ≤ 1**: Requires permissive enough ptrace settings
-- **Python targets only**: Target process must be Python (for remote_exec)
 
 
 ## References
