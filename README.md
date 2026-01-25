@@ -74,25 +74,27 @@ Exiting client (supervisor and target still running)
 ```
 
 ### Background and Purpose
-The feature introduced in PEP 768 uses OS-level capabilities that allow to interrupt a running process from the outside and execute any code within it; on Unix platforms the system call for this is named `ptrace` (there's a similar feature on Windows which is out of scope here.) The new feature essentially created a bridge between low-level native code and Python sessions, so that the debugger can understand the Python state of the target process, hook into the interpreter to have it execute the user's code, and send results back.
+The feature introduced in PEP 768 uses OS-level capabilities that allow to interrupt a running process from the outside and execute any code within it; on Unix platforms the system call for this is named `ptrace` (Windows is out of scope here.) The new feature essentially created a safe interface between low-level native code and the Python runtime, so that the debugger can understand the state of the target process, hook into the interpreter to have it execute the user's code, and send results back.
 
 This is very useful if one doesn't control the full code getting run so the traditional method of inserting breakpoints into the actual source code to trigger debuggers at certain points doesn't work, or if one doesn't know in advance before the job is run whether or where to halt it for debugging but wants to be able to "on the fly" if it shows concerning behavior. 
 
-Because the `ptrace` capability is very powerful, many distributions include a Linux Security Module defining a setting, `ptrace_scope`, that restricts which processes can call it on a particular target. The options are:
+Because the `ptrace` capability is very powerful, most distributions include a Linux Security Module defining a setting, `ptrace_scope`, that restricts which processes can call it on a particular target. The options are:
 
 - 0, AKA "classic" ptrace permissions: A process can be traced by any other process owned by the same user.
 - 1, "restricted": Can only be traced by its own parent process and ancestors; or processes it has explicitly registered permission for.
 - 2, "admin-only": Tracing requires special privileges typically set only for the root user (who can also trace under the settings above.)
 - 3, "no attach": Tracing is disabled.
 
-The goal of `helicopter-parent` is to help with **case 1**.
+The goal of `helicopter-parent` is to help with **case 1**, which is now the default on many distributions.
 In this situation, if you want to be able to debug your Python job as a non-root user, it is rather awkward. You _could_ do so as the parent process - i.e. from an interactive REPL, use `subprocess` to launch Python with some script, then whenever needed call `pdb.attach()` to enter a PDB session. _But_, that method has the disadvantage that the originating session must be kept for as long as you might need to debug the job, which is inconvenient for long-running jobs (not to mention one might accidentally close the tab/window.). 
 
 The advantage of `helicopter-parent` is that it can run _in the background_ and detect a client REPL that you launch _whenever you want_, arranging permission for you to attach from there. 
 
-### Security
+### Security implications
+The security risk of using helicopter-parent is significantly lower than the "classic" setting of unrestricted ptrace, since it only applies to Python processes the user explicitly launched through the helper. That said, I make no guarantees and use is at your own risk.
 
-
+### Acknowledgements
+This tool is possible only because of the work of PEP 768's authors and implementers Pablo Galindo Salgado, Matt Wozniski, and Ivona Stojanovic - thank you!
 
 ## References
 
@@ -101,4 +103,3 @@ The advantage of `helicopter-parent` is that it can run _in the background_ and 
 - [pdb documentation](https://docs.python.org/3/library/pdb.html)
 - [Yama LSM Documentation](https://docs.kernel.org/admin-guide/LSM/Yama.html)
 - [prctl(2) man page](https://man7.org/linux/man-pages/man2/prctl.2.html)
-
