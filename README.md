@@ -1,4 +1,6 @@
-# helicopter-parent - Helper for External Python Debugging on Linux as non-root
+# helicopter-parent: A helper for external Python debugging on Linux as non-root
+
+![Logo showing a snake with a helicopter blade attached, hovering over a smaller snake](./docs/assets/logo_small.png)
 
 Python 3.14's [PEP 768](https://peps.python.org/pep-0768/) feature and accompanying `pdb` capability support on-demand external or remote debugging for Python processes, but common Linux security restrictions make this awkward to use (without root privileges) for long jobs. This is a lightweight helper that manages processes for you to make the experience effectively as user-friendly as without the system restrictions: it can run any Python job and lets you launch a REPL from which you can debug it with Pdb. 
 
@@ -91,13 +93,15 @@ In this situation, if you want to be able to debug your Python job as a non-root
 The advantage of `helicopter-parent` is that it can run _in the background_ and detect a client REPL that you launch _whenever you want_, arranging permission for you to attach from there. 
 
 ### Security implications
-The security risk of using helicopter-parent is significantly lower than the "classic" setting of unrestricted ptrace, since it only applies to Python processes the user explicitly launched through the helper. That said, I make no guarantees and use is at your own risk.
+The security risk of using helicopter-parent is significantly lower than the "classic" setting of unrestricted ptrace, since it only applies to Python processes the user explicitly launched through the helper for the purpose of traceability. That said, I make no guarantees and use is at your own risk.
 
 ### Acknowledgements
 This tool is possible only because of the work of PEP 768's authors and implementers Pablo Galindo Salgado, Matt Wozniski, and Ivona Stojanovic - thank you!
 
-## References
+### AI Notice
+This code was produced with the aid of a Generative AI / LLM coding agent, and manually reviewed and tested. 
 
+## References
 - [Python 3.14 What's New - pdb](https://docs.python.org/3/whatsnew/3.14.html#pdb)
 - [PEP 768 - Remote Debugging](https://peps.python.org/pep-0768/)
 - [pdb documentation](https://docs.python.org/3/library/pdb.html)
